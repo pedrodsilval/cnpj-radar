@@ -7,6 +7,7 @@ import { LoginPage } from './LoginPage'
 import { UsuariosTab } from './UsuariosTab'
 import { DashboardTab } from './DashboardTab'
 import { TarefasTab } from './TarefasTab'
+import { RelatoriosTab } from './RelatoriosTab'
 import { estaLogado, getUsuario, limparSessao, apiFetch, type UsuarioLogado } from './auth'
 
 // --- Types ---
@@ -71,7 +72,7 @@ interface PropostaData {
 }
 
 type Tab = 'cadastro' | 'scores' | 'socios' | 'certidoes'
-type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas'
+type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas' | 'relatorios'
 type StatusLead = 'idle' | 'salvando' | 'salvo' | 'erro'
 type StatusAtualizacao = 'idle' | 'salvando' | 'erro'
 
@@ -633,7 +634,8 @@ function App() {
             onClick={() => setVista('alertas')}
             badge={contagemAlertas}
           />
-          <NavItem label="Tarefas"        active={vista === 'tarefas'}   onClick={() => setVista('tarefas')} />
+          <NavItem label="Tarefas"        active={vista === 'tarefas'}     onClick={() => setVista('tarefas')} />
+          <NavItem label="Relatórios"     active={vista === 'relatorios'}  onClick={() => setVista('relatorios')} />
           <NavItem label="Painel de Mercado" active={vista === 'painel'} onClick={() => setVista('painel')} />
           <NavItem label="Leads"         disabled />
           <NavItem label="Clientes"      disabled />
@@ -690,7 +692,8 @@ function App() {
           {vista === 'dashboard' && <DashboardTab />}
 
           {/* Vista Tarefas */}
-          {vista === 'tarefas' && <TarefasTab />}
+          {vista === 'tarefas'    && <TarefasTab />}
+          {vista === 'relatorios' && <RelatoriosTab />}
 
           {/* Vista Configurações */}
           {vista === 'config' && <CredenciaisTab />}

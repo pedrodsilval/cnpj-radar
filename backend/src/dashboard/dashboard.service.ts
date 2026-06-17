@@ -2,6 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { TarefasService } from '../tarefas/tarefas.service';
 
+export interface FunilConversao {
+  status: string;
+  label: string;
+  total: number;
+}
+
+export interface RelatorioConsultor {
+  nome: string;
+  consultas: number;
+  leads: number;
+  convertidos: number;
+  taxaConversao: number;
+}
+
 export interface ConsultasPorMes {
   mes: string;  // YYYY-MM
   total: number;
@@ -120,5 +134,54 @@ export class DashboardService {
       topCnaes:                 topCnaesRaw.map(r => ({ codigo: r.codigo, descricao: r.descricao ?? r.codigo, total: Number(r.total) })),
       topConsultores:           topConsultoresRaw.map(r => ({ nome: r.nome, total: Number(r.total) })),
     };
+  }
+
+  async funilConversao(): Promise<FunilConversao[]> {
+    const ORDEM = ['novo', 'em_contato', 'proposta_enviada', 'convertido', 'descartado'];
+    const LABELS: Record<string, string> = {
+      novo:             'Novo',
+      em_contato:       'Em contato',
+      proposta_enviada: 'Proposta enviada',
+      convertido:       'Convertido',
+      descartado:       'Descartado',
+    };
+
+    const rows = await this.ds.query<{ status: string; total: string }[]>(
+      `SELECT status, COUNT(*)::int AS total FROM leads GROUP BY status`,
+    );
+
+    const map = new Map(rows.map(r => [r.status, Number(r.total)]));
+    return ORDEM.map(s => ({ status: s, label: LABELS[s] ?? s, total: map.get(s) ?? 0 }));
+  }
+
+  async relatorioConsultores(de: string, ate: string): Promise<RelatorioConsultor[]> {
+    const rows = await this.ds.query<{
+      nome: string; consultas: string; leads: string; convertidos: string;
+    }[]>(`
+      SELECT
+        COALESCE(u.nome, 'Sem identificação')                              AS nome,
+        COUNT(DISTINCT c.id)::int                                          AS consultas,
+        COUNT(DISTINCT l.id)::int                                          AS leads,
+        COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'convertido')::int  AS convertidos
+      FROM consultas c
+      LEFT JOIN usuarios u  ON u.id::text = c.usuario_id::text
+      LEFT JOIN leads   l  ON l.cnpj = c.cnpj
+      WHERE c.consultado_em >= $1
+        AND c.consultado_em <  $2::date + INTERVAL '1 day'
+      GROUP BY COALESCE(u.nome, 'Sem identificação')
+      ORDER BY consultas DESC
+    `, [de, ate]);
+
+    return rows.map(r => {
+      const leads = Number(r.leads);
+      const conv  = Number(r.convertidos);
+      return {
+        nome:          r.nome,
+        consultas:     Number(r.consultas),
+        leads,
+        convertidos:   conv,
+        taxaConversao: leads > 0 ? Math.round((conv / leads) * 100) : 0,
+      };
+    });
   }
 }
