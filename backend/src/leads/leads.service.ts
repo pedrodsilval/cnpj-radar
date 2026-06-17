@@ -748,15 +748,16 @@ export class LeadsService {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(id)) throw new NotFoundException('ID inválido.');
 
-    const lead = await this.leadRepo.findOne({ where: { id } });
+    const lead = await this.leadRepo
+      .createQueryBuilder('lead')
+      .leftJoinAndSelect('lead.empresa', 'empresa')
+      .leftJoinAndSelect('empresa.socios', 'socios')
+      .where('lead.id = :id', { id })
+      .getOne();
+
     if (!lead) throw new NotFoundException('Lead não encontrado.');
 
-    const [empresa, socios] = await Promise.all([
-      lead.empresaId ? this.empresaRepo.findOne({ where: { id: lead.empresaId } }) : null,
-      lead.empresaId ? this.socioRepo.find({ where: { empresaId: lead.empresaId } }) : [],
-    ]);
-
-    return buildProposta(lead, empresa, socios.length);
+    return buildProposta(lead, lead.empresa, lead.empresa?.socios?.length ?? 0);
   }
 
   async gerarPropostaPdf(id: string): Promise<Buffer> {
