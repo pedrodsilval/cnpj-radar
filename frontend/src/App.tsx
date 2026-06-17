@@ -613,6 +613,7 @@ function App() {
       }
       const atualizado = (await res.json()) as LeadData
       setLeadData(atualizado)
+      setPropostaDados(null)
       setStatusAtualizacao('idle')
     } catch {
       setErroStatus('Não foi possível atualizar o status. Verifique sua conexão.')
@@ -873,12 +874,6 @@ function App() {
                         <span
                           className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-accent"
                           aria-label="scores disponíveis"
-                        />
-                      )}
-                      {tab === 'certidoes' && (
-                        <span
-                          className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-primary"
-                          aria-label="certidões disponíveis"
                         />
                       )}
                     </button>

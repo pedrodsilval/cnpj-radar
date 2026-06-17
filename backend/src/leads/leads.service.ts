@@ -778,6 +778,27 @@ export class LeadsService {
 
     const statusAnterior = lead.status;
     lead.status = novoStatus as LeadStatus;
+
+    // Recalcula scores quando eClienteAtivo muda (conversão ou reversão)
+    if (lead.empresaId) {
+      const eClienteAtivo = novoStatus === LeadStatus.CONVERTIDO;
+      const eraClienteAtivo = statusAnterior === LeadStatus.CONVERTIDO;
+      if (eClienteAtivo !== eraClienteAtivo) {
+        const [empresa, socios] = await Promise.all([
+          this.empresaRepo.findOne({ where: { id: lead.empresaId } }),
+          this.socioRepo.find({ where: { empresaId: lead.empresaId } }),
+        ]);
+        if (empresa) {
+          const { scoreCadastral, scoreComercial, scoreAtencao, recomendacao } =
+            this.scoresService.calcular(empresa, socios.length, eClienteAtivo);
+          lead.scoreCadastral = scoreCadastral;
+          lead.scoreComercial = scoreComercial;
+          lead.scoreAtencao = scoreAtencao;
+          lead.recomendacao = recomendacao;
+        }
+      }
+    }
+
     const salvo = await this.leadRepo.save(lead);
 
     await this.historicoRepo.save(
