@@ -1,0 +1,113 @@
+===============================================================
+  CNPJ RADAR — INSTRUÇÕES DE INTEGRAÇÃO N8N
+  Gerado em: 09/06/2026
+===============================================================
+
+PREMISSA FUNDAMENTAL
+---------------------
+O n8n nunca acessa BrasilAPI, CRM ou WhatsApp diretamente.
+Toda chamada passa pela API do backend (NestJS).
+Toda execução deve ser registrada em workflow_runs.
+
+
+ROTAS DISPONÍVEIS PARA O N8N
+-------------------------------
+
+  Consulta em lote (principal uso na Fase 2):
+    POST http://localhost:3000/cnpj/lote
+    Body: { "cnpjs": ["00000000000191", "11222333000181"] }
+    Máx: 10 CNPJs por requisição
+    Retorna: { total, sucesso, erros, resultados: [...] }
+
+  Salvar lead + calcular scores:
+    POST http://localhost:3000/leads/00000000000191
+    Retorna: { id, cnpj, status, scoreCadastral, scoreComercial, scoreAtencao, recomendacao, ... }
+
+  Buscar proposta ou diagnóstico:
+    GET http://localhost:3000/leads/{uuid}/proposta
+    Retorna: { tipo, titulo, resumo, scores, recomendacao, proximosPassos, geradoEm }
+
+  Atualizar status do lead:
+    PATCH http://localhost:3000/leads/{uuid}/status
+    Body: { "status": "em_contato" }
+    Valores válidos: novo | em_contato | proposta_enviada | convertido | descartado
+
+  Buscar lead por CNPJ:
+    GET http://localhost:3000/leads/cnpj/00000000000191
+
+  Registrar início de execução (n8n chama ao iniciar):
+    POST http://localhost:3000/workflow-runs
+    Body: { "workflowId": "pipeline-comercial", "execucaoId": "n8n-exec-123", "payload": {} }
+    Retorna: { id, status: "iniciado", iniciadoEm, ... }
+
+  Fechar execução (n8n chama ao terminar):
+    PATCH http://localhost:3000/workflow-runs/{uuid}/concluir
+    Body: { "status": "concluido", "resultado": { "cnpjsProcessados": 5 } }
+    Ou em caso de erro: { "status": "erro", "resultado": { "motivo": "..." } }
+
+  Listar execuções (auditoria):
+    GET http://localhost:3000/workflow-runs
+
+
+FLUXO: PIPELINE COMERCIAL
+---------------------------
+Use este fluxo no n8n quando um lead for salvo manualmente pelo usuário
+ou em campanhas de prospecção.
+
+  Passo 1 — Registrar início:
+    POST /workflow-runs
+    Body: { "workflowId": "pipeline-comercial" }
+    → Guarde o "id" retornado para usar no passo final
+
+  Passo 2 — Salvar lead:
+    POST /leads/{cnpj}
+    → Guarde o "id" do lead retornado
+
+  Passo 3 — Buscar proposta/diagnóstico:
+    GET /leads/{lead-id}/proposta
+    → Use os "proximosPassos" para orientar a equipe
+
+  Passo 4 — CRM / WhatsApp / E-mail:
+    *** DESABILITADO até a Fase 5 (aguarda sistema de login) ***
+    Os passos de envio externo ficam com confirmação manual obrigatória.
+
+  Passo 5 — Fechar auditoria:
+    PATCH /workflow-runs/{run-id}/concluir
+    Body: { "status": "concluido", "resultado": { "leadId": "...", "tipo": "proposta" } }
+
+
+FLUXO: CONSULTAS EM LOTE
+--------------------------
+Use este fluxo para processar uma lista de CNPJs de uma vez.
+
+  Passo 1 — Registrar início:
+    POST /workflow-runs
+    Body: { "workflowId": "consulta-em-lote", "payload": { "total": 8 } }
+
+  Passo 2 — Enviar lote:
+    POST /cnpj/lote
+    Body: { "cnpjs": ["11111111000191", "22222222000100", ...] }
+    ⚠ Máximo 10 CNPJs. Para volumes maiores, use um fornecedor pago (BrasilAPI é beta).
+
+  Passo 3 — Fechar auditoria:
+    PATCH /workflow-runs/{run-id}/concluir
+    Body: { "status": "concluido", "resultado": { total, sucesso, erros } }
+
+
+ATENÇÃO — REGRAS INEGOCIÁVEIS
+--------------------------------
+1. n8n NUNCA acessa BrasilAPI ou qualquer serviço externo diretamente.
+2. CRM, WhatsApp e e-mail automáticos só ligam na Fase 5 (com login ativo).
+3. Toda execução registrada em workflow_runs (passo 1 e passo final obrigatórios).
+4. Em produção: APP_ENV=production — mock nunca é retornado.
+
+
+REFERÊNCIAS
+------------
+  Arquitetura n8n:      docs/arquitetura/03-workflows-n8n.md
+  Caminho crítico:      docs/arquitetura/04-caminho-critico.md
+  Roadmap Fase 2:       docs/roadmap/fase-2-comercial.md
+  Decisão #1 (login):   CLAUDE.md seção "Decisões registradas"
+  Decisão #2 (clientes): CLAUDE.md seção "Decisões registradas"
+
+===============================================================
