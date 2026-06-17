@@ -59,6 +59,13 @@ interface LeadData {
   status: string
 }
 
+interface PropostaFator {
+  categoria: string
+  valor: string
+  impacto: 'positivo' | 'atencao' | 'negativo' | 'info'
+  detalhe: string
+}
+
 interface PropostaData {
   tipo: 'proposta' | 'diagnostico'
   titulo: string
@@ -67,6 +74,8 @@ interface PropostaData {
   scores: { cadastral: number | null; comercial: number | null; atencao: number | null }
   recomendacao: string | null
   resumo: string
+  fatoresConsiderados: PropostaFator[]
+  servicosSugeridos: string[]
   proximosPassos: string[]
   geradoEm: string
 }
@@ -295,24 +304,22 @@ function PropostaModal({ dados, leadId, onFechar }: { dados: PropostaData; leadI
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
           {/* Resumo */}
-          <div className={`rounded-lg border px-4 py-3 ${bgTipo}`}>
-            <p className="font-body text-depth text-sm">{dados.resumo}</p>
+          <div className={`rounded-xl border px-4 py-3 ${bgTipo}`}>
+            <p className="font-body text-depth text-sm leading-relaxed">{dados.resumo}</p>
           </div>
 
-          {/* Scores resumidos */}
+          {/* Scores */}
           <div className="grid grid-cols-3 gap-3">
-            {(
-              [
-                { label: 'Cadastral', val: dados.scores.cadastral, tipo: 'cadastral' },
-                { label: 'Comercial', val: dados.scores.comercial, tipo: 'comercial' },
-                { label: 'Atenção',   val: dados.scores.atencao,   tipo: 'atencao'   },
-              ] as const
-            ).map(({ label, val, tipo }) => {
+            {([
+              { label: 'Cadastral', val: dados.scores.cadastral, tipo: 'cadastral' },
+              { label: 'Comercial', val: dados.scores.comercial, tipo: 'comercial' },
+              { label: 'Atenção',   val: dados.scores.atencao,   tipo: 'atencao'   },
+            ] as const).map(({ label, val, tipo }) => {
               const isAlert = tipo === 'atencao' && (val ?? 0) >= 40
               const isHigh  = tipo !== 'atencao' && (val ?? 0) >= 70
               const color   = isAlert ? 'text-danger' : isHigh ? 'text-accent' : 'text-depth'
               return (
-                <div key={label} className="text-center p-3 rounded-lg border border-gray-100">
+                <div key={label} className="text-center p-3 rounded-xl border border-gray-100">
                   <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">{label}</p>
                   <p className={`font-display font-black text-2xl ${color}`}>{val ?? '—'}</p>
                 </div>
@@ -320,24 +327,70 @@ function PropostaModal({ dados, leadId, onFechar }: { dados: PropostaData; leadI
             })}
           </div>
 
+          {/* Base desta análise — fatores */}
+          {dados.fatoresConsiderados?.length > 0 && (
+            <div>
+              <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-3">Base desta análise</p>
+              <div className="space-y-2">
+                {dados.fatoresConsiderados.map((f, i) => {
+                  const estilos = {
+                    positivo: { badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', detalhe: 'text-emerald-700' },
+                    atencao:  { badge: 'bg-amber-100  text-amber-700',   dot: 'bg-amber-500',   detalhe: 'text-amber-700'   },
+                    negativo: { badge: 'bg-red-100    text-red-700',     dot: 'bg-red-500',     detalhe: 'text-red-700'     },
+                    info:     { badge: 'bg-blue-50    text-blue-700',    dot: 'bg-blue-400',    detalhe: 'text-blue-700'    },
+                  }[f.impacto]
+                  return (
+                    <div key={i} className="rounded-xl border border-gray-100 px-3 py-2.5 bg-white">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-display font-bold text-gray-400 uppercase tracking-wide min-w-0 shrink-0">
+                          {f.categoria}
+                        </span>
+                        <span className={`text-xs font-display font-bold px-2 py-0.5 rounded-full ${estilos.badge}`}>
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${estilos.dot}`} />
+                          {f.valor}
+                        </span>
+                      </div>
+                      <p className={`text-xs font-body mt-1 leading-snug ${estilos.detalhe}`}>{f.detalhe}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Serviços sugeridos */}
+          {dados.servicosSugeridos?.length > 0 && (
+            <div>
+              <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-3">Serviços relevantes para esta empresa</p>
+              <ul className="space-y-1.5">
+                {dados.servicosSugeridos.map((s, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                    <span className="font-body text-depth text-sm">{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Recomendação */}
           {dados.recomendacao && (
             <div>
-              <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-2">Recomendação</p>
+              <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-2">Recomendação</p>
               <p className="font-body text-depth text-sm">{dados.recomendacao}</p>
             </div>
           )}
 
           {/* Próximos passos */}
           <div>
-            <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-2">Próximos passos</p>
+            <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-3">Próximos passos</p>
             <ol className="space-y-2">
               {dados.proximosPassos.map((passo, i) => (
                 <li key={i} className="flex items-start gap-2.5">
                   <span className="w-5 h-5 rounded-full bg-primary/10 text-primary font-display font-bold text-xs flex items-center justify-center flex-shrink-0 mt-0.5">
                     {i + 1}
                   </span>
-                  <span className="font-body text-depth text-sm">{passo}</span>
+                  <span className="font-body text-depth text-sm leading-snug">{passo}</span>
                 </li>
               ))}
             </ol>
