@@ -33,10 +33,11 @@ function formatarCnpj(cnpj: string): string {
 
 function descricaoValidade(dias: number | null, validade: string | null): string {
   if (!validade) return 'Sem data registrada'
-  if (dias === null) return `Válida até ${validade}`
-  if (dias < 0) return `Vencida há ${Math.abs(dias)} dia${Math.abs(dias) !== 1 ? 's' : ''}`
-  if (dias === 0) return 'Vence hoje'
-  return `Vence em ${dias} dia${dias !== 1 ? 's' : ''}`
+  const dataFmt = new Date(validade).toLocaleDateString('pt-BR')
+  if (dias === null) return `Válida até ${dataFmt}`
+  if (dias < 0) return `Vencida em ${dataFmt} (há ${Math.abs(dias)} dia${Math.abs(dias) !== 1 ? 's' : ''})`
+  if (dias === 0) return `Vence hoje (${dataFmt})`
+  return `Vence em ${dataFmt} — ${dias} dia${dias !== 1 ? 's' : ''}`
 }
 
 function AlertaCard({ alerta }: { alerta: Alerta }) {
