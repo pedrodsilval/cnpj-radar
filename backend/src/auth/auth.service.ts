@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -19,20 +19,31 @@ export interface CriarUsuarioDto {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(Usuario)
     private readonly usuarioRepo: Repository<Usuario>,
     private readonly jwtService: JwtService,
   ) {}
 
-  async login(dto: LoginDto) {
-    const user = await this.usuarioRepo.findOne({ where: { email: dto.email.toLowerCase(), ativo: true } });
-    if (!user) throw new UnauthorizedException('E-mail ou senha incorretos.');
+  async login(dto: LoginDto, ip?: string) {
+    const email = dto.email.toLowerCase();
+    const user = await this.usuarioRepo.findOne({ where: { email, ativo: true } });
+
+    if (!user) {
+      this.logger.warn(`[AUTH] Login falhou (e-mail não encontrado): ${email} IP:${ip ?? 'desconhecido'}`);
+      throw new UnauthorizedException('E-mail ou senha incorretos.');
+    }
 
     const ok = await bcrypt.compare(dto.senha, user.senhaHash);
-    if (!ok) throw new UnauthorizedException('E-mail ou senha incorretos.');
+    if (!ok) {
+      this.logger.warn(`[AUTH] Login falhou (senha incorreta): ${email} IP:${ip ?? 'desconhecido'}`);
+      throw new UnauthorizedException('E-mail ou senha incorretos.');
+    }
 
-    const token = this.jwtService.sign({ sub: user.id, email: user.email, perfil: user.perfil });
+    this.logger.log(`[AUTH] Login bem-sucedido: ${email} (ID:${user.id}) IP:${ip ?? 'desconhecido'}`);
+    const token = this.jwtService.sign({ sub: user.id, email: user.email, perfil: user.perfil, tv: user.tokenVersion });
     return {
       access_token: token,
       usuario: { id: user.id, nome: user.nome, email: user.email, perfil: user.perfil },
@@ -62,8 +73,10 @@ export class AuthService {
   }
 
   async alterarSenha(id: string, novaSenha: string): Promise<void> {
+    const user = await this.usuarioRepo.findOneOrFail({ where: { id } });
     const senhaHash = await bcrypt.hash(novaSenha, 12);
-    await this.usuarioRepo.update(id, { senhaHash });
+    await this.usuarioRepo.update(id, { senhaHash, tokenVersion: user.tokenVersion + 1 });
+    this.logger.log(`[AUTH] Senha alterada: ID:${id} — tokens anteriores invalidados`);
   }
 
   async desativarUsuario(id: string): Promise<void> {
