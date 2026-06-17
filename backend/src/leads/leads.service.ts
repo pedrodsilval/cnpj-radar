@@ -21,62 +21,247 @@ export interface PropostaResponse {
   geradoEm: string;
 }
 
+// ─── Helpers para buildProposta ───────────────────────────────────────────────
+
+function idadeAnos(dataInicio: string | null): number | null {
+  if (!dataInicio) return null;
+  return (Date.now() - new Date(dataInicio).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+}
+
+function porteLabel(porte: string | null): string {
+  if (!porte) return 'empresa';
+  const p = porte.toUpperCase();
+  if (p.includes('GRANDE'))                                         return 'grande empresa';
+  if (p.includes('MEDIO') || p.includes('MÉDIA') || p.includes('MEDIA')) return 'empresa de médio porte';
+  if (p.includes('EPP') || p.includes('PEQUENA'))                   return 'empresa de pequeno porte (EPP)';
+  if (p.includes('MICRO'))                                           return 'microempresa (ME)';
+  return 'empresa';
+}
+
+function setorCnae(codigo: string | null): string {
+  if (!codigo) return 'setor não informado';
+  const sec = parseInt(codigo.substring(0, 2), 10);
+  if (isNaN(sec)) return 'setor não informado';
+  if (sec >= 1  && sec <= 3)  return 'agropecuária';
+  if (sec >= 5  && sec <= 9)  return 'mineração';
+  if (sec >= 10 && sec <= 33) return 'indústria';
+  if (sec === 35)             return 'energia';
+  if (sec >= 36 && sec <= 39) return 'saneamento/meio ambiente';
+  if (sec >= 41 && sec <= 43) return 'construção civil';
+  if (sec >= 45 && sec <= 47) return 'comércio';
+  if (sec >= 49 && sec <= 53) return 'transporte e logística';
+  if (sec >= 55 && sec <= 56) return 'hospedagem e alimentação';
+  if (sec >= 58 && sec <= 63) return 'comunicação e tecnologia';
+  if (sec >= 64 && sec <= 66) return 'serviços financeiros';
+  if (sec === 68)             return 'mercado imobiliário';
+  if (sec >= 69 && sec <= 75) return 'serviços profissionais';
+  if (sec >= 77 && sec <= 82) return 'serviços administrativos';
+  if (sec === 85)             return 'educação';
+  if (sec >= 86 && sec <= 88) return 'saúde';
+  if (sec >= 90 && sec <= 93) return 'cultura e entretenimento';
+  if (sec >= 94 && sec <= 96) return 'outros serviços';
+  return 'setor de serviços';
+}
+
+function capitalLabel(capital: number | null): string {
+  if (!capital || capital <= 0) return 'capital social não declarado';
+  if (capital < 1_000)          return `capital social de R$ ${capital.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+  if (capital < 10_000)         return `capital social de R$ ${(capital / 1000).toFixed(0)}k`;
+  if (capital < 1_000_000)      return `capital de R$ ${(capital / 1000).toFixed(0)}k`;
+  return `capital de R$ ${(capital / 1_000_000).toFixed(1)}M`;
+}
+
+function contatoDisponivel(empresa: Empresa | null): string {
+  if (!empresa) return '';
+  if (empresa.email && empresa.telefone) return `Contatos disponíveis: ${empresa.email} / ${empresa.telefone}.`;
+  if (empresa.email)                    return `E-mail disponível: ${empresa.email}.`;
+  if (empresa.telefone)                 return `Telefone disponível: ${empresa.telefone}.`;
+  return 'Nenhum contato registrado na Receita Federal — buscar contato via redes sociais ou site.';
+}
+
+// ─── Lógica principal ─────────────────────────────────────────────────────────
+
 function buildProposta(lead: Lead, empresa: Empresa | null): PropostaResponse {
-  const inativa  = empresa && empresa.situacaoCadastral !== 'ATIVA';
-  const mei      = empresa?.optanteMei === true;
-  const atencao  = lead.scoreAtencao ?? 0;
+  const situacao  = empresa?.situacaoCadastral ?? 'DESCONHECIDA';
+  const ativa     = situacao === 'ATIVA';
+  const mei       = empresa?.optanteMei === true;
+  const simples   = empresa?.optanteSimples === true;
+  const atencao   = lead.scoreAtencao  ?? 0;
   const comercial = lead.scoreComercial ?? 0;
+  const anos      = idadeAnos(empresa?.dataInicioAtividade ?? null);
+  const setor     = setorCnae(empresa?.cnaePrincipalCodigo ?? null);
+  const pLabel    = porteLabel(empresa?.porte ?? null);
+  const capLabel  = capitalLabel(empresa?.capitalSocial ?? null);
+  const nome      = empresa?.razaoSocial ?? lead.cnpj;
+  const regiao    = empresa?.uf === 'BA' ? 'Salvador/BA' : (empresa?.municipio ? `${empresa.municipio}/${empresa.uf}` : null);
+  const cnaDesc   = empresa?.cnaePrincipalDescricao ?? null;
+  const contato   = contatoDisponivel(empresa);
 
   let tipo: 'proposta' | 'diagnostico';
+  let titulo: string;
   let resumo: string;
   let proximosPassos: string[];
 
-  if (inativa) {
+  // ── 1. Empresa inativa ──────────────────────────────────────────────────────
+  if (!ativa && empresa) {
     tipo = 'diagnostico';
-    resumo = `Empresa com situação cadastral "${empresa!.situacaoCadastral}". Não indicada para abordagem comercial no momento.`;
+
+    const motivoMap: Record<string, string> = {
+      BAIXADA:   'encerrada (baixada)',
+      INAPTA:    'inapta (omissão de declarações)',
+      SUSPENSA:  'com inscrição suspensa',
+      NULA:      'nula (erro de cadastro)',
+    };
+    const motivoLabel = motivoMap[situacao] ?? `com situação "${situacao}"`;
+
+    titulo = `Diagnóstico — ${nome} (${situacao})`;
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (regiao ? `, sediada em ${regiao},` : '') +
+      ` com situação cadastral ${motivoLabel}.` +
+      (anos ? ` Possui ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''} de registro.` : '') +
+      ' Não recomendada para abordagem comercial no momento.';
+
+    if (situacao === 'INAPTA') {
+      proximosPassos = [
+        'Verificar pendências fiscais que motivaram a inaptidão (omissão de DIRPJ/DEFIS)',
+        "Avaliar interesse do responsável em regularizar — oferecer serviço de reativação Everest/FK's",
+        'Se houver interesse, levantar pendências junto à Receita Federal (e-CAC)',
+        'Elaborar orçamento de regularização antes de qualquer proposta de honorários contínuos',
+      ];
+    } else if (situacao === 'SUSPENSA') {
+      proximosPassos = [
+        'Verificar motivo da suspensão junto à Receita Federal',
+        'Avaliar possibilidade de reativação com o responsável legal',
+        'Oferecer consultoria de regularização cadastral e fiscal',
+      ];
+    } else {
+      proximosPassos = [
+        'Registrar como inativa na base de leads — não priorizar para abordagem',
+        'Monitorar reabertura (nova empresa na mesma razão social ou sócios)',
+        "Manter registro para histórico de relacionamento com a Everest/FK's",
+      ];
+    }
+
+  // ── 2. MEI ──────────────────────────────────────────────────────────────────
+  } else if (ativa && mei) {
+    tipo   = 'diagnostico';
+    titulo = `Diagnóstico MEI — ${nome}`;
+    const anosStr = anos ? `${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''} como MEI` : 'tempo de MEI não informado';
+    resumo = `${nome} é um MEI no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com ${anosStr}.` +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Abordagem educacional recomendada com foco na migração para ME/EPP, que amplia o acesso a serviços contábeis completos e benefícios fiscais.';
     proximosPassos = [
-      "Registrar empresa como inativa na base de leads",
-      "Verificar histórico de relacionamento com a Everest/FK's",
-      "Aguardar eventual reabertura ou sucessão societária",
+      `Contato inicial com o responsável: ${contato || 'buscar contato via redes sociais'}`,
+      'Apresentar os limites do MEI (R$81k/ano) e os riscos de ultrapassar o teto',
+      'Preparar comparativo MEI × ME: custos, benefícios e obrigações',
+      "Oferecer reunião gratuita de orientação tributária — gancho para conversão em cliente Everest/FK's",
+      'Monitorar faturamento: se próximo do limite, acelerar abordagem',
     ];
-  } else if (mei) {
-    tipo = 'diagnostico';
-    resumo = 'Empresa MEI. Abordagem educacional recomendada com foco na migração para ME/EPP.';
+
+  // ── 3. Atenção crítica (≥ 60) ───────────────────────────────────────────────
+  } else if (ativa && atencao >= 60) {
+    tipo   = 'diagnostico';
+    titulo = `Diagnóstico Urgente — ${nome}`;
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com score de atenção de ${atencao}/100 — nível crítico.` +
+      (anos ? ` Opera há ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''}.` : '') +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Pendências significativas identificadas. Diagnóstico obrigatório antes de qualquer proposta.';
     proximosPassos = [
-      'Apresentar vantagens da formalização como Microempresa',
-      'Preparar comparativo de custos MEI vs. ME',
-      'Agendar reunião de orientação tributária gratuita',
+      `Primeiro contato: ${contato || 'buscar contato via redes sociais ou site'}`,
+      'Solicitar acesso ao e-CAC para levantamento completo de pendências fiscais',
+      'Verificar situação das certidões: FGTS, CND Federal, Dívida Ativa, Trabalhista (CNDT) e Estadual',
+      'Levantar débitos com Receita Federal, PGFN e Secretaria Estadual de Fazenda',
+      'Apresentar diagnóstico de regularidade e orçamento de regularização antes de honorários contínuos',
     ];
-  } else if (atencao >= 40) {
-    tipo = 'diagnostico';
-    resumo = `Score de atenção de ${atencao}/100 indica pontos críticos a verificar antes de qualquer proposta formal.`;
+
+  // ── 4. Atenção elevada (40–59) ───────────────────────────────────────────────
+  } else if (ativa && atencao >= 40) {
+    tipo   = 'diagnostico';
+    titulo = `Diagnóstico Inicial — ${nome}`;
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com score de atenção de ${atencao}/100 — pontos de verificação identificados.` +
+      (simples ? ' Optante pelo Simples Nacional.' : '') +
+      (anos ? ` Opera há ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''}.` : '') +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Recomendado diagnóstico de regularidade antes de qualquer proposta formal.';
     proximosPassos = [
-      'Verificar certidões fiscais e trabalhistas',
-      'Levantar e regularizar pendências cadastrais',
-      'Agendar diagnóstico tributário antes de proposta',
+      `Contato com o responsável: ${contato || 'buscar contato via redes sociais'}`,
+      'Oferecer diagnóstico tributário e fiscal gratuito ou a custo simbólico',
+      'Verificar regularidade de certidões (FGTS, CND Federal, Estadual)',
+      'Identificar regime tributário atual e avaliar enquadramento correto',
+      `Após diagnóstico: elaborar proposta de honorários mensais para ${pLabel}`,
     ];
-  } else if (comercial >= 70) {
-    tipo = 'proposta';
-    resumo = `Score comercial de ${comercial}/100 indica alta aderência ao portfólio Everest/FK's. Abordagem consultiva prioritária.`;
+
+  // ── 5. Alta aderência comercial (≥ 70) ──────────────────────────────────────
+  } else if (ativa && comercial >= 70) {
+    tipo   = 'proposta';
+    titulo = `Proposta Comercial — ${nome}`;
+    const regimeStr = mei ? 'MEI' : simples ? 'Simples Nacional' : 'Lucro Presumido/Real';
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com score comercial de ${comercial}/100 — alta aderência ao portfólio Everest/FK's.` +
+      ` Regime tributário: ${regimeStr}.` +
+      (anos ? ` Opera há ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''}.` : '') +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Abordagem consultiva prioritária — empresa com perfil ideal para os serviços contábeis da Everest/FK\'s.';
     proximosPassos = [
-      'Contato inicial com o responsável pela empresa',
-      "Apresentação dos serviços Everest/FK's",
-      'Elaborar proposta formal de honorários',
+      `Contato prioritário: ${contato || 'buscar contato via redes sociais ou site'}`,
+      `Apresentar portfólio Everest/FK's com ênfase nos serviços para ${setor}`,
+      simples
+        ? 'Avaliar enquadramento no Simples Nacional e oportunidades de economia tributária'
+        : 'Comparar regimes tributários (Simples × Lucro Presumido × Lucro Real)',
+      'Elaborar proposta formal de honorários com escopo detalhado',
+      'Definir responsável interno e cronograma de onboarding',
     ];
+
+  // ── 6. Aderência moderada (40–69) ───────────────────────────────────────────
+  } else if (ativa && comercial >= 40) {
+    tipo   = 'proposta';
+    titulo = `Proposta Comercial — ${nome}`;
+    const regimeStr = simples ? 'Simples Nacional' : 'Lucro Presumido/Real';
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com score comercial de ${comercial}/100 — aderência moderada.` +
+      ` Regime tributário presumido: ${regimeStr}.` +
+      (anos ? ` Opera há ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''}.` : '') +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Recomendada abordagem consultiva para validar aderência antes de proposta formal.';
+    proximosPassos = [
+      `Contato exploratório: ${contato || 'buscar contato via redes sociais ou site'}`,
+      `Entender necessidades específicas da empresa no setor de ${setor}`,
+      'Verificar se há contabilidade atual e condições de migração',
+      "Apresentar diferenciais Everest/FK's para o segmento",
+      'Se houver interesse, elaborar proposta customizada com escopo e honorários',
+    ];
+
+  // ── 7. Baixa aderência ──────────────────────────────────────────────────────
   } else {
-    tipo = 'proposta';
-    resumo = `Score comercial de ${comercial}/100 indica aderência moderada. Verificar aderência antes de proposta formal.`;
+    tipo   = 'proposta';
+    titulo = `Análise Comercial — ${nome}`;
+    resumo = `${nome} é uma ${pLabel} no setor de ${setor}` +
+      (cnaDesc ? ` (${cnaDesc})` : '') +
+      (regiao ? `, em ${regiao},` : '') +
+      ` com score comercial de ${comercial}/100 — aderência baixa ao perfil atual.` +
+      (anos ? ` Opera há ${Math.floor(anos)} ano${Math.floor(anos) !== 1 ? 's' : ''}.` : '') +
+      ` ${capLabel.charAt(0).toUpperCase() + capLabel.slice(1)}.` +
+      ' Recomendado contato exploratório antes de investir em abordagem formal.';
     proximosPassos = [
-      'Contato exploratório para entender necessidades',
-      'Verificar aderência ao portfólio de serviços',
-      'Agendar reunião de diagnóstico',
+      `Verificar contato disponível: ${contato || 'sem contato registrado na Receita'}`,
+      'Pesquisar a empresa em redes sociais e site para entender o perfil atual',
+      'Contato exploratório para mapear necessidade real',
+      'Avaliar se o perfil justifica abordagem formal ou arquivar para reavaliação',
     ];
   }
-
-  const nomeDisplay = empresa?.razaoSocial ?? lead.cnpj;
-  const titulo = tipo === 'proposta'
-    ? `Proposta Comercial — ${nomeDisplay}`
-    : `Diagnóstico Inicial — ${nomeDisplay}`;
 
   return {
     tipo,
