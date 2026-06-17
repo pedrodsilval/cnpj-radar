@@ -8,6 +8,7 @@ import { HistoricoStatus } from './entities/historico-status.entity';
 import { LeadsService } from './leads.service';
 import { LeadsController } from './leads.controller';
 import { ScoresService } from './scores.service';
+import { LeadsPdfService } from './leads-pdf.service';
 
 @Module({
   imports: [
@@ -15,6 +16,6 @@ import { ScoresService } from './scores.service';
     CnpjModule,
   ],
   controllers: [LeadsController],
-  providers: [LeadsService, ScoresService],
+  providers: [LeadsService, ScoresService, LeadsPdfService],
 })
 export class LeadsModule {}

@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { LeadsService } from './leads.service';
+
 @Controller('leads')
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
@@ -18,6 +20,17 @@ export class LeadsController {
   @Get('cnpj/:cnpj')
   buscarLeadPorCnpj(@Param('cnpj') cnpj: string) {
     return this.leadsService.buscarLeadPorCnpj(cnpj);
+  }
+
+  @Get(':id/proposta/pdf')
+  async gerarPropostaPdf(@Param('id') id: string, @Res() res: Response) {
+    const buffer = await this.leadsService.gerarPropostaPdf(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="proposta-${id}.pdf"`,
+      'Content-Length': String(buffer.length),
+    });
+    res.end(buffer);
   }
 
   @Get(':id/proposta')

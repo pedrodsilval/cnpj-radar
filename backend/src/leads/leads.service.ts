@@ -7,6 +7,7 @@ import { Socio } from '../cnpj/entities/socio.entity';
 import { Lead, LeadStatus } from './entities/lead.entity';
 import { HistoricoStatus } from './entities/historico-status.entity';
 import { ScoresService } from './scores.service';
+import { LeadsPdfService } from './leads-pdf.service';
 
 export interface PropostaResponse {
   tipo: 'proposta' | 'diagnostico';
@@ -102,6 +103,7 @@ export class LeadsService {
     @InjectRepository(HistoricoStatus)
     private readonly historicoRepo: Repository<HistoricoStatus>,
     private readonly scoresService: ScoresService,
+    private readonly leadsPdfService: LeadsPdfService,
   ) {}
 
   async salvarLead(cnpj: string): Promise<Lead> {
@@ -167,6 +169,11 @@ export class LeadsService {
       : null;
 
     return buildProposta(lead, empresa);
+  }
+
+  async gerarPropostaPdf(id: string): Promise<Buffer> {
+    const proposta = await this.gerarProposta(id);
+    return this.leadsPdfService.gerarPdf(proposta);
   }
 
   async atualizarStatus(id: string, novoStatus: string): Promise<Lead> {

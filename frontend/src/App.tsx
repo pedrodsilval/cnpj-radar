@@ -237,10 +237,28 @@ function NavItem({
   )
 }
 
-function PropostaModal({ dados, onFechar }: { dados: PropostaData; onFechar: () => void }) {
-  const isProposta = dados.tipo === 'proposta'
-  const corTipo    = isProposta ? 'text-accent' : 'text-primary'
-  const bgTipo     = isProposta ? 'bg-accent/10 border-accent/20' : 'bg-primary/10 border-primary/20'
+function PropostaModal({ dados, leadId, onFechar }: { dados: PropostaData; leadId: string; onFechar: () => void }) {
+  const isProposta   = dados.tipo === 'proposta'
+  const corTipo      = isProposta ? 'text-accent' : 'text-primary'
+  const bgTipo       = isProposta ? 'bg-accent/10 border-accent/20' : 'bg-primary/10 border-primary/20'
+  const [baixando, setBaixando] = useState(false)
+
+  async function baixarPdf() {
+    setBaixando(true)
+    try {
+      const res = await apiFetch(`/leads/${leadId}/proposta/pdf`)
+      if (!res.ok) return
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `proposta-${dados.cnpj}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setBaixando(false)
+    }
+  }
 
   return (
     <div
@@ -330,12 +348,21 @@ function PropostaModal({ dados, onFechar }: { dados: PropostaData; onFechar: () 
           <p className="text-xs text-gray-400 font-body">
             Gerado em {new Date(dados.geradoEm).toLocaleString('pt-BR')}
           </p>
-          <button
-            onClick={onFechar}
-            className="bg-primary text-surface font-display font-bold text-sm px-5 py-2 rounded-lg hover:bg-depth transition-colors"
-          >
-            Fechar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={baixarPdf}
+              disabled={baixando}
+              className="text-sm font-display font-bold px-4 py-2 rounded-lg border border-gray-200 text-gray-500 hover:text-depth hover:border-gray-300 transition-colors disabled:opacity-50"
+            >
+              {baixando ? 'Gerando…' : 'Baixar PDF'}
+            </button>
+            <button
+              onClick={onFechar}
+              className="bg-primary text-surface font-display font-bold text-sm px-5 py-2 rounded-lg hover:bg-depth transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
         </div>
 
       </div>
@@ -448,6 +475,7 @@ function App() {
   const [erroStatus, setErroStatus]                 = useState<string | null>(null)
   const [propostaCarregando, setPropostaCarregando] = useState(false)
   const [propostaDados, setPropostaDados]           = useState<PropostaData | null>(null)
+  const [propostaLeadId, setPropostaLeadId]         = useState<string | null>(null)
   const contagemAlertas                             = useContagemAlertas()
 
   const usuario = getUsuario()
@@ -505,6 +533,7 @@ function App() {
         return
       }
       setPropostaDados((await res.json()) as PropostaData)
+      setPropostaLeadId(leadData.id)
     } catch {
       setErroStatus('Não foi possível gerar a proposta. Verifique sua conexão.')
     } finally {
@@ -578,7 +607,7 @@ function App() {
   return (
     <>
     {propostaDados && (
-      <PropostaModal dados={propostaDados} onFechar={() => setPropostaDados(null)} />
+      <PropostaModal dados={propostaDados} leadId={propostaLeadId!} onFechar={() => { setPropostaDados(null); setPropostaLeadId(null) }} />
     )}
     {modalSenha && usuario && (
       <ModalAlterarSenha usuario={usuario} onFechar={() => setModalSenha(false)} />
