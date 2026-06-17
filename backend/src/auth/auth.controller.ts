@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Request } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import type { CriarUsuarioDto, LoginDto } from './auth.service';
 import { Public } from './decorators/public.decorator';
@@ -31,9 +31,16 @@ export class AuthController {
     return this.authService.listarUsuarios();
   }
 
-  @Roles('administrador')
+  // Qualquer usuário pode alterar a própria senha; admin pode alterar qualquer uma
   @Patch('usuarios/:id/senha')
-  alterarSenha(@Param('id') id: string, @Body('senha') senha: string) {
+  alterarSenha(
+    @Param('id') id: string,
+    @Body('senha') senha: string,
+    @Request() req: { user: { id: string; perfil: string } },
+  ) {
+    if (req.user.perfil !== 'administrador' && req.user.id !== id) {
+      throw new ForbiddenException('Você só pode alterar sua própria senha.');
+    }
     return this.authService.alterarSenha(id, senha);
   }
 

@@ -7,7 +7,7 @@ import { LoginPage } from './LoginPage'
 import { UsuariosTab } from './UsuariosTab'
 import { DashboardTab } from './DashboardTab'
 import { TarefasTab } from './TarefasTab'
-import { estaLogado, getUsuario, limparSessao, apiFetch } from './auth'
+import { estaLogado, getUsuario, limparSessao, apiFetch, type UsuarioLogado } from './auth'
 
 // --- Types ---
 
@@ -343,30 +343,118 @@ function PropostaModal({ dados, onFechar }: { dados: PropostaData; onFechar: () 
   )
 }
 
+// --- Modal alterar senha ---
+
+function ModalAlterarSenha({ usuario, onFechar }: { usuario: UsuarioLogado; onFechar: () => void }) {
+  const [senhaAtual, setSenhaAtual]   = useState('')
+  const [novaSenha, setNovaSenha]     = useState('')
+  const [confirmacao, setConfirmacao] = useState('')
+  const [salvando, setSalvando]       = useState(false)
+  const [erro, setErro]               = useState<string | null>(null)
+  const [ok, setOk]                   = useState(false)
+
+  async function salvar() {
+    if (!senhaAtual) { setErro('Informe a senha atual.'); return }
+    if (novaSenha.length < 8) { setErro('A nova senha deve ter pelo menos 8 caracteres.'); return }
+    if (novaSenha !== confirmacao) { setErro('As senhas não coincidem.'); return }
+    setSalvando(true); setErro(null)
+    try {
+      // Verifica senha atual fazendo login
+      const check = await apiFetch('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: usuario.email, senha: senhaAtual }),
+      })
+      if (!check.ok) { setErro('Senha atual incorreta.'); return }
+
+      const res = await apiFetch(`/auth/usuarios/${usuario.id}/senha`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senha: novaSenha }),
+      })
+      if (!res.ok) { setErro('Não foi possível alterar a senha.'); return }
+      setOk(true)
+    } catch { setErro('Erro de rede.') }
+    finally { setSalvando(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-depth/60 p-4" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-sm">
+        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-display font-black text-depth text-base">Alterar senha</h2>
+          <button onClick={onFechar} aria-label="Fechar" className="text-gray-400 hover:text-depth transition-colors">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+          </button>
+        </div>
+
+        {ok ? (
+          <div className="px-6 py-8 text-center">
+            <p className="font-display font-bold text-accent text-base mb-1">Senha alterada com sucesso!</p>
+            <p className="text-gray-400 text-sm font-body mb-5">Use a nova senha no próximo acesso.</p>
+            <button onClick={onFechar} className="bg-primary text-white font-display font-bold text-sm px-6 py-2.5 rounded-xl hover:bg-depth transition-colors">
+              Fechar
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Senha atual</label>
+                <input type="password" value={senhaAtual} onChange={e => setSenhaAtual(e.target.value)} autoComplete="current-password"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
+              </div>
+              <div>
+                <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Nova senha</label>
+                <input type="password" value={novaSenha} onChange={e => setNovaSenha(e.target.value)} autoComplete="new-password"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
+              </div>
+              <div>
+                <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Confirmar nova senha</label>
+                <input type="password" value={confirmacao} onChange={e => setConfirmacao(e.target.value)} autoComplete="new-password"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
+              </div>
+              {erro && <p className="text-xs text-danger font-display font-bold">⚠ {erro}</p>}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+              <button onClick={onFechar} className="text-sm font-display font-bold text-gray-500 px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">Cancelar</button>
+              <button onClick={salvar} disabled={salvando} className="text-sm font-display font-bold bg-primary text-white px-5 py-2 rounded-lg hover:bg-depth transition-colors disabled:opacity-50">
+                {salvando ? 'Salvando…' : 'Alterar senha'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // --- App ---
 
 function App() {
-  const [logado, setLogado]               = useState(estaLogado)
-  const usuario                           = getUsuario()
-  const contagemAlertas                   = useContagemAlertas()
-  const [vista, setVista]                 = useState<Vista>('cnpj')
+  const [logado, setLogado]                         = useState(estaLogado)
+  const [modalSenha, setModalSenha]                 = useState(false)
+  const [vista, setVista]                           = useState<Vista>('cnpj')
+  const [cnpj, setCnpj]                             = useState('')
+  const [erro, setErro]                             = useState<string | null>(null)
+  const [carregando, setCarregando]                 = useState(false)
+  const [resultado, setResultado]                   = useState<ResultadoSucesso | null>(null)
+  const [cnpjConsultado, setCnpjConsultado]         = useState('')
+  const [activeTab, setActiveTab]                   = useState<Tab>('cadastro')
+  const [statusLead, setStatusLead]                 = useState<StatusLead>('idle')
+  const [erroLead, setErroLead]                     = useState<string | null>(null)
+  const [leadData, setLeadData]                     = useState<LeadData | null>(null)
+  const [statusAtualizacao, setStatusAtualizacao]   = useState<StatusAtualizacao>('idle')
+  const [erroStatus, setErroStatus]                 = useState<string | null>(null)
+  const [propostaCarregando, setPropostaCarregando] = useState(false)
+  const [propostaDados, setPropostaDados]           = useState<PropostaData | null>(null)
+  const contagemAlertas                             = useContagemAlertas()
+
+  const usuario = getUsuario()
 
   if (!logado) {
     return <LoginPage onLogado={() => setLogado(true)} />
   }
-  const [cnpj, setCnpj]                   = useState('')
-  const [erro, setErro]                   = useState<string | null>(null)
-  const [carregando, setCarregando]       = useState(false)
-  const [resultado, setResultado]         = useState<ResultadoSucesso | null>(null)
-  const [cnpjConsultado, setCnpjConsultado] = useState('')
-  const [activeTab, setActiveTab]         = useState<Tab>('cadastro')
-  const [statusLead, setStatusLead]             = useState<StatusLead>('idle')
-  const [erroLead, setErroLead]                 = useState<string | null>(null)
-  const [leadData, setLeadData]                 = useState<LeadData | null>(null)
-  const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao>('idle')
-  const [erroStatus, setErroStatus]             = useState<string | null>(null)
-  const [propostaCarregando, setPropostaCarregando] = useState(false)
-  const [propostaDados, setPropostaDados]           = useState<PropostaData | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -492,6 +580,9 @@ function App() {
     {propostaDados && (
       <PropostaModal dados={propostaDados} onFechar={() => setPropostaDados(null)} />
     )}
+    {modalSenha && usuario && (
+      <ModalAlterarSenha usuario={usuario} onFechar={() => setModalSenha(false)} />
+    )}
     <div className="flex h-screen bg-gradient-to-br from-[#020617] via-[#172554] to-[#0f172a] font-body overflow-hidden">
 
       {/* ── Sidebar ── */}
@@ -525,15 +616,24 @@ function App() {
           {usuario?.perfil === 'administrador' && (
             <NavItem label="Usuários" active={vista === 'usuarios'} onClick={() => setVista('usuarios')} />
           )}
-          <div className="px-3 pt-2 flex items-center justify-between">
-            <p className="text-surface/30 text-xs font-body">{usuario?.nome ?? 'Usuário'}</p>
+          <div className="px-3 pt-2 space-y-1">
             <button
-              onClick={() => { limparSessao(); setLogado(false) }}
-              className="text-surface/30 hover:text-surface/60 text-xs font-body transition-colors"
-              aria-label="Sair"
+              onClick={() => setModalSenha(true)}
+              className="w-full text-left text-surface/40 hover:text-surface/70 text-xs font-body transition-colors truncate"
+              title="Alterar senha"
             >
-              Sair
+              {usuario?.nome ?? 'Usuário'}
             </button>
+            <div className="flex items-center justify-between">
+              <span className="text-surface/20 text-[10px] font-body capitalize">{usuario?.perfil ?? ''}</span>
+              <button
+                onClick={() => { limparSessao(); setLogado(false) }}
+                className="text-surface/30 hover:text-surface/60 text-xs font-body transition-colors"
+                aria-label="Sair"
+              >
+                Sair
+              </button>
+            </div>
           </div>
         </div>
       </aside>
