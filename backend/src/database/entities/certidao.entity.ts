@@ -63,9 +63,11 @@ export class Certidao {
   @Column({ type: 'varchar', length: 50 })
   tipo: CertidaoTipo;
 
+  @Index()
   @Column({ type: 'varchar', length: 30, default: CertidaoStatus.NAO_CONSULTADA })
   status: CertidaoStatus;
 
+  @Index()
   @Column({ type: 'varchar', length: 10, nullable: true })
   validade: string | null;
 

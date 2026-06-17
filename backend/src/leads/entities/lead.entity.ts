@@ -49,6 +49,7 @@ export class Lead {
   @CreateDateColumn({ name: 'salvo_em' })
   salvoEm: Date;
 
+  @Index()
   @UpdateDateColumn({ name: 'atualizado_em' })
   atualizadoEm: Date;
 

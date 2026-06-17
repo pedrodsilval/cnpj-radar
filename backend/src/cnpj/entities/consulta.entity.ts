@@ -26,6 +26,7 @@ export class Consulta {
   @Column({ name: 'usuario_id', nullable: true, type: 'varchar' })
   usuarioId: string | null;
 
+  @Index()
   @CreateDateColumn({ name: 'consultado_em' })
   consultadoEm: Date;
 }
