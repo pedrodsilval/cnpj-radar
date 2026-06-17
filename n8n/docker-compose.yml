@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      # Chave de criptografia para credenciais salvas no n8n.
+      # Troque para um valor secreto antes de usar em produção.
+      - N8N_ENCRYPTION_KEY=everest-fks-cnpj-radar-dev
+      - GENERIC_TIMEZONE=America/Bahia
+      - TZ=America/Bahia
+    volumes:
+      - n8n_data:/home/node/.n8n
+    # Necessário no Linux; no Windows com Docker Desktop funciona sem isso.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  n8n_data:

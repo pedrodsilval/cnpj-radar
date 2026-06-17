@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { apiFetch } from './auth'
 
 interface Alerta {
   id: string
@@ -88,7 +89,7 @@ export function AlertasTab() {
     setCarregando(true)
     setErro(null)
     try {
-      const res  = await fetch(`/certidoes/alertas?dias=${d}`)
+      const res  = await apiFetch(`/certidoes/alertas?dias=${d}`)
       const json = await res.json()
       if (!res.ok) {
         setErro((json as { message?: string }).message ?? 'Não foi possível carregar os alertas.')
@@ -200,7 +201,7 @@ export function useContagemAlertas() {
   const [count, setCount] = useState<number>(0)
 
   useEffect(() => {
-    fetch('/certidoes/alertas?dias=30')
+    apiFetch('/certidoes/alertas?dias=30')
       .then(r => r.json())
       .then((data: unknown) => { if (Array.isArray(data)) setCount(data.length) })
       .catch(() => {})

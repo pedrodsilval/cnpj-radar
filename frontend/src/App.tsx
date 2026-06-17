@@ -5,7 +5,9 @@ import { AlertasTab, useContagemAlertas } from './AlertasTab'
 import { PainelTab } from './PainelTab'
 import { LoginPage } from './LoginPage'
 import { UsuariosTab } from './UsuariosTab'
-import { estaLogado, getUsuario, limparSessao } from './auth'
+import { DashboardTab } from './DashboardTab'
+import { TarefasTab } from './TarefasTab'
+import { estaLogado, getUsuario, limparSessao, apiFetch } from './auth'
 
 // --- Types ---
 
@@ -69,7 +71,7 @@ interface PropostaData {
 }
 
 type Tab = 'cadastro' | 'scores' | 'socios' | 'certidoes'
-type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios'
+type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas'
 type StatusLead = 'idle' | 'salvando' | 'salvo' | 'erro'
 type StatusAtualizacao = 'idle' | 'salvando' | 'erro'
 
@@ -386,7 +388,7 @@ function App() {
 
     setCarregando(true)
     try {
-      const res  = await fetch(`/cnpj/${limpo}`)
+      const res  = await apiFetch(`/cnpj/${limpo}`)
       const json = await res.json()
 
       if (!res.ok || 'error' in json) {
@@ -408,7 +410,7 @@ function App() {
     if (!leadData) return
     setPropostaCarregando(true)
     try {
-      const res = await fetch(`/leads/${leadData.id}/proposta`)
+      const res = await apiFetch(`/leads/${leadData.id}/proposta`)
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
         setErroStatus((json as { message?: string }).message ?? 'Não foi possível gerar a proposta.')
@@ -427,7 +429,7 @@ function App() {
     setStatusAtualizacao('salvando')
     setErroStatus(null)
     try {
-      const res = await fetch(`/leads/${leadData.id}/status`, {
+      const res = await apiFetch(`/leads/${leadData.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: novoStatus }),
@@ -451,7 +453,7 @@ function App() {
     setStatusLead('salvando')
     setErroLead(null)
     try {
-      const res = await fetch(`/leads/${cnpjConsultado}`, { method: 'POST' })
+      const res = await apiFetch(`/leads/${cnpjConsultado}`, { method: 'POST' })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
         setErroLead((json as { message?: string }).message ?? 'Não foi possível salvar o lead.')
@@ -503,13 +505,15 @@ function App() {
         </div>
 
         <nav className="flex-1 p-3 space-y-0.5">
-          <NavItem label="Consulta CNPJ" active={vista === 'cnpj'} onClick={() => setVista('cnpj')} />
+          <NavItem label="Dashboard"      active={vista === 'dashboard'} onClick={() => setVista('dashboard')} />
+          <NavItem label="Consulta CNPJ"  active={vista === 'cnpj'}      onClick={() => setVista('cnpj')} />
           <NavItem
             label="Alertas"
             active={vista === 'alertas'}
             onClick={() => setVista('alertas')}
             badge={contagemAlertas}
           />
+          <NavItem label="Tarefas"        active={vista === 'tarefas'}   onClick={() => setVista('tarefas')} />
           <NavItem label="Painel de Mercado" active={vista === 'painel'} onClick={() => setVista('painel')} />
           <NavItem label="Leads"         disabled />
           <NavItem label="Clientes"      disabled />
@@ -540,16 +544,24 @@ function App() {
         {/* Header */}
         <header className="bg-depth h-14 flex-shrink-0 flex items-center px-8 border-b border-surface/10">
           <h1 className="font-display font-bold text-surface text-sm tracking-wide">
-            {vista === 'config'   ? 'Configurações'        :
-             vista === 'alertas'  ? 'Alertas de Certidões' :
-             vista === 'painel'   ? 'Painel de Mercado'    :
-             vista === 'usuarios' ? 'Usuários'             :
-                                    'Consulta de CNPJ'}
+            {vista === 'config'    ? 'Configurações'        :
+             vista === 'alertas'   ? 'Alertas de Certidões' :
+             vista === 'painel'    ? 'Painel de Mercado'    :
+             vista === 'usuarios'  ? 'Usuários'             :
+             vista === 'dashboard' ? 'Dashboard'            :
+             vista === 'tarefas'   ? 'Tarefas'              :
+                                     'Consulta de CNPJ'}
           </h1>
         </header>
 
         {/* Content */}
         <main className="flex-1 overflow-y-auto p-8 space-y-5">
+
+          {/* Vista Dashboard */}
+          {vista === 'dashboard' && <DashboardTab />}
+
+          {/* Vista Tarefas */}
+          {vista === 'tarefas' && <TarefasTab />}
 
           {/* Vista Configurações */}
           {vista === 'config' && <CredenciaisTab />}

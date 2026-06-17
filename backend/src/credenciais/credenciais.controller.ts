@@ -1,9 +1,9 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { CredenciaisService } from './credenciais.service';
 import { CriarCredencialDto, AtualizarCredencialDto } from './credenciais.dto';
-import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 
-@Public()
+@Roles('administrador')
 @Controller('credenciais')
 export class CredenciaisController {
   constructor(private readonly service: CredenciaisService) {}

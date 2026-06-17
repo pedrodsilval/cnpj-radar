@@ -1,8 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { LeadsService } from './leads.service';
-import { Public } from '../auth/decorators/public.decorator';
-
-@Public()
 @Controller('leads')
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}

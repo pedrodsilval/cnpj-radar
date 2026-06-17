@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { authHeaders } from './auth'
+import { apiFetch } from './auth'
 
 interface Usuario {
   id: string
@@ -36,9 +36,9 @@ function ModalNovoUsuario({ onSalvo, onFechar }: ModalNovoProps) {
     setSalvando(true)
     setErro(null)
     try {
-      const res = await fetch('/auth/usuarios', {
+      const res = await apiFetch('/auth/usuarios', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nome, email, senha, perfil }),
       })
       const json = await res.json() as { message?: string }
@@ -115,7 +115,7 @@ export function UsuariosTab() {
     setCarregando(true)
     setErro(null)
     try {
-      const res = await fetch('/auth/usuarios', { headers: authHeaders() })
+      const res = await apiFetch('/auth/usuarios')
       if (!res.ok) { setErro('Sem permissão ou falha ao carregar usuários.'); return }
       setUsuarios(await res.json() as Usuario[])
     } catch { setErro('Erro de rede.') }
@@ -124,7 +124,7 @@ export function UsuariosTab() {
 
   async function desativar(id: string) {
     if (!confirm('Desativar este usuário?')) return
-    await fetch(`/auth/usuarios/${id}`, { method: 'DELETE', headers: authHeaders() })
+    await apiFetch(`/auth/usuarios/${id}`, { method: 'DELETE' })
     await carregar()
   }
 

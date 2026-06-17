@@ -3,8 +3,6 @@ import type { Response } from 'express';
 import { CnpjService } from './cnpj.service';
 import { CnpjPdfService } from './cnpj-pdf.service';
 import type { CnpjErrorCode } from './cnpj.types';
-import { Public } from '../auth/decorators/public.decorator';
-
 const HTTP_STATUS: Record<CnpjErrorCode, number> = {
   CNPJ_INVALIDO: 400,
   CNPJ_NAO_ENCONTRADO: 404,
@@ -15,7 +13,6 @@ const HTTP_STATUS: Record<CnpjErrorCode, number> = {
   RESPOSTA_INCOMPLETA: 502,
 };
 
-@Public()
 @Controller('cnpj')
 export class CnpjController {
   constructor(

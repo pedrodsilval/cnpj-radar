@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { apiFetch } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ export function CredenciaisTab() {
     setCarregando(true)
     setErro(null)
     try {
-      const res = await fetch('/credenciais')
+      const res = await apiFetch('/credenciais')
       if (!res.ok) throw new Error('Falha ao carregar credenciais.')
       setLista((await res.json()) as Credencial[])
     } catch {
@@ -196,14 +197,14 @@ export function CredenciaisTab() {
       if (editandoId) {
         const body: Record<string, unknown> = { descricao: campos.descricao }
         if (valor) body.valor = valor
-        const res = await fetch(`/credenciais/${editandoId}`, {
+        const res = await apiFetch(`/credenciais/${editandoId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         })
         if (!res.ok) throw new Error('Falha ao atualizar.')
       } else {
-        const res = await fetch('/credenciais', {
+        const res = await apiFetch('/credenciais', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tipo: campos.tipo, descricao: campos.descricao, valor }),
@@ -221,7 +222,7 @@ export function CredenciaisTab() {
 
   async function handleToggleAtivo(c: Credencial) {
     try {
-      await fetch(`/credenciais/${c.id}`, {
+      await apiFetch(`/credenciais/${c.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ativo: !c.ativo }),
@@ -235,7 +236,7 @@ export function CredenciaisTab() {
   async function handleRemover(id: string) {
     setRemovendoId(id)
     try {
-      await fetch(`/credenciais/${id}`, { method: 'DELETE' })
+      await apiFetch(`/credenciais/${id}`, { method: 'DELETE' })
       setLista((prev) => prev.filter((c) => c.id !== id))
     } catch {
       setErro('Não foi possível remover a credencial.')

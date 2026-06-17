@@ -4,9 +4,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { CertidoesService } from './certidoes.service';
 import { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
-import { Public } from '../auth/decorators/public.decorator';
-
-@Public()
 @Controller('certidoes')
 export class CertidoesController {
   constructor(private readonly service: CertidoesService) {}

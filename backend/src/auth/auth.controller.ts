@@ -1,10 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import type { CriarUsuarioDto, LoginDto } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
-import { RolesGuard } from './guards/roles.guard';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -21,28 +19,24 @@ export class AuthController {
     return req.user;
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('administrador')
   @Post('usuarios')
   criarUsuario(@Body() dto: CriarUsuarioDto) {
     return this.authService.criarUsuario(dto);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('administrador')
   @Get('usuarios')
   listarUsuarios() {
     return this.authService.listarUsuarios();
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('administrador')
   @Patch('usuarios/:id/senha')
   alterarSenha(@Param('id') id: string, @Body('senha') senha: string) {
     return this.authService.alterarSenha(id, senha);
   }
 
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('administrador')
   @Delete('usuarios/:id')
   desativarUsuario(@Param('id') id: string) {

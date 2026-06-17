@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { apiFetch } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ function ModalCampanha({ campanha, onSalvo, onFechar }: ModalProps) {
     try {
       const url    = editando ? `/painel/campanhas/${campanha!.id}` : '/painel/campanhas'
       const method = editando ? 'PATCH' : 'POST'
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) { setErro('Não foi possível salvar.'); return }
       onSalvo()
     } catch { setErro('Erro de rede.') }
@@ -214,7 +215,7 @@ export function CampanhasTab() {
     setErro(null)
     try {
       const q = filtroStatus ? `?status=${filtroStatus}` : ''
-      const res = await fetch(`/painel/campanhas${q}`)
+      const res = await apiFetch(`/painel/campanhas${q}`)
       if (!res.ok) { setErro('Não foi possível carregar as campanhas.'); return }
       setCampanhas(await res.json() as Campanha[])
     } catch { setErro('Erro de rede.') }
@@ -225,7 +226,7 @@ export function CampanhasTab() {
 
   async function remover(id: string) {
     if (!confirm('Remover esta campanha permanentemente?')) return
-    await fetch(`/painel/campanhas/${id}`, { method: 'DELETE' })
+    await apiFetch(`/painel/campanhas/${id}`, { method: 'DELETE' })
     await carregar()
   }
 

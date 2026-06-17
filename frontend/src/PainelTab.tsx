@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { CampanhasTab } from './CampanhasTab'
+import { apiFetch } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +54,7 @@ function ModalConfig({ item, onSalvo, onFechar }: ModalConfigProps) {
     setSalvando(true)
     setErro(null)
     try {
-      const res = await fetch('/painel/cnae-config', {
+      const res = await apiFetch('/painel/cnae-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -79,7 +80,7 @@ function ModalConfig({ item, onSalvo, onFechar }: ModalConfigProps) {
   async function remover() {
     setSalvando(true)
     try {
-      await fetch(`/painel/cnae-config/${encodeURIComponent(item.codigo)}`, { method: 'DELETE' })
+      await apiFetch(`/painel/cnae-config/${encodeURIComponent(item.codigo)}`, { method: 'DELETE' })
       onSalvo()
     } catch {
       setErro('Erro ao remover.')
@@ -175,8 +176,8 @@ export function PainelTab() {
     try {
       const q = uf ? `?uf=${uf}` : ''
       const [resInd, resCnae] = await Promise.all([
-        fetch(`/painel/indicadores${q}`),
-        fetch(`/painel/cnae${q}`),
+        apiFetch(`/painel/indicadores${q}`),
+        apiFetch(`/painel/cnae${q}`),
       ])
       if (!resInd.ok || !resCnae.ok) { setErro('Não foi possível carregar o painel.'); return }
       const [ind, cnae] = await Promise.all([resInd.json(), resCnae.json()])

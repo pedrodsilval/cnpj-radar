@@ -1,0 +1,84 @@
+{
+  "name": "Consulta em Lote — Everest/FK's",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "22222222-0002-0002-0002-000000000001",
+      "name": "Início",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/workflow-runs",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"workflowId\": \"consulta-em-lote\"}",
+        "options": {}
+      },
+      "id": "22222222-0002-0002-0002-000000000002",
+      "name": "Registrar Início",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/cnpj/lote",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ cnpjs: $('Início').first().json.cnpjs }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "22222222-0002-0002-0002-000000000003",
+      "name": "Consultar Lote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"status\": \"concluido\"}",
+        "options": {}
+      },
+      "id": "22222222-0002-0002-0002-000000000004",
+      "name": "Concluir com Sucesso",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Início": {
+      "main": [[{"node": "Registrar Início", "type": "main", "index": 0}]]
+    },
+    "Registrar Início": {
+      "main": [[{"node": "Consultar Lote", "type": "main", "index": 0}]]
+    },
+    "Consultar Lote": {
+      "main": [[{"node": "Concluir com Sucesso", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "22222222-0002-0002-0002-000000000099",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {
+    "Início": [{"json": {"cnpjs": ["30327128000125"]}}]
+  },
+  "staticData": null,
+  "tags": []
+}

@@ -10,6 +10,8 @@ import { CertidoesModule } from './certidoes/certidoes.module';
 import { CredenciaisModule } from './credenciais/credenciais.module';
 import { PainelModule } from './painel/painel.module';
 import { AuthModule } from './auth/auth.module';
+import { TarefasModule } from './tarefas/tarefas.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { Usuario } from './database/entities/usuario.entity';
 
 @Module({
@@ -24,6 +26,8 @@ import { Usuario } from './database/entities/usuario.entity';
       entities: [Usuario],
     }),
     AuthModule,
+    TarefasModule,
+    DashboardModule,
     CnpjModule,
     LeadsModule,
     WorkflowRunsModule,

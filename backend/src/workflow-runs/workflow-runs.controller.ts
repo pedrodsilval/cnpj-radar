@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { WorkflowRunsService } from './workflow-runs.service';
 import { Public } from '../auth/decorators/public.decorator';
 
-@Public()
+@Public() // n8n chama sem token de usuário
 @Controller('workflow-runs')
 export class WorkflowRunsController {
   constructor(private readonly service: WorkflowRunsService) {}

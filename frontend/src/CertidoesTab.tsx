@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { apiFetch } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
       if (form.validade)    body.validade    = form.validade
       if (form.observacoes) body.observacoes = form.observacoes
 
-      const res = await fetch(`/certidoes/empresa/${cnpj}`, {
+      const res = await apiFetch(`/certidoes/empresa/${cnpj}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -134,7 +135,7 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
     try {
       const fd = new FormData()
       fd.append('arquivo', file)
-      const res = await fetch(`/certidoes/${item.certidaoId}/anexo`, {
+      const res = await apiFetch(`/certidoes/${item.certidaoId}/anexo`, {
         method: 'POST',
         body: fd,
       })
@@ -322,7 +323,7 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
     setCarregando(true)
     setErro(null)
     try {
-      const res  = await fetch(`/certidoes/checklist/${cnpj}`)
+      const res  = await apiFetch(`/certidoes/checklist/${cnpj}`)
       const json = await res.json()
       if (!res.ok) {
         setErro((json as { message?: string }).message ?? 'Não foi possível carregar as certidões.')
@@ -345,7 +346,7 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
     setConsultandoAuto(true)
     setErroAuto(null)
     try {
-      const res = await fetch(`/certidoes/consultar/${cnpj}`, { method: 'POST' })
+      const res = await apiFetch(`/certidoes/consultar/${cnpj}`, { method: 'POST' })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
         setErroAuto((json as { message?: string }).message ?? 'Erro na consulta automática.')

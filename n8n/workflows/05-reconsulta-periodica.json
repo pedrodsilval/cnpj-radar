@@ -1,0 +1,182 @@
+{
+  "name": "05 — Reconsulta Periódica de CNPJs",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 6 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "cron-reconsulta",
+      "name": "Toda Segunda às 06h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_BASE_URL }}/leads",
+        "options": {}
+      },
+      "id": "buscar-leads",
+      "name": "Buscar Leads Ativos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "=",
+        "options": {}
+      },
+      "id": "split-leads",
+      "name": "Iterar Leads",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-status",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "convertido",
+              "operator": { "type": "string", "operation": "notEquals" }
+            },
+            {
+              "id": "cond-descartado",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "descartado",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filtro-ativos",
+      "name": "Apenas Ativos",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_BASE_URL }}/cnpj/{{ $json.cnpj }}",
+        "options": {}
+      },
+      "id": "reconsultar-cnpj",
+      "name": "Reconsultar CNPJ",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-mudanca",
+              "leftValue": "={{ $json.dados?.situacaoCadastral }}",
+              "rightValue": "ATIVA",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "detectar-mudanca",
+      "name": "Situação Mudou?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_BASE_URL }}/workflow-runs",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "workflowId", "value": "05-reconsulta-periodica" },
+            {
+              "name": "payload",
+              "value": "={{ { cnpj: $json.dados?.cnpj, situacaoCadastral: $json.dados?.situacaoCadastral, alerta: 'Situação cadastral diferente de ATIVA detectada na reconsulta periódica' } }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "registrar-alerta",
+      "name": "Registrar Alerta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_BASE_URL }}/workflow-runs",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "workflowId", "value": "05-reconsulta-periodica" },
+            {
+              "name": "payload",
+              "value": "={{ { totalLeads: $('Iterar Leads').context.noItemsLeft ? 'concluído' : 'parcial', executadoEm: new Date().toISOString() } }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "registrar-conclusao",
+      "name": "Registrar Conclusão",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 480]
+    }
+  ],
+  "connections": {
+    "Toda Segunda às 06h": {
+      "main": [[{ "node": "Buscar Leads Ativos", "type": "main", "index": 0 }]]
+    },
+    "Buscar Leads Ativos": {
+      "main": [[{ "node": "Iterar Leads", "type": "main", "index": 0 }]]
+    },
+    "Iterar Leads": {
+      "main": [[{ "node": "Apenas Ativos", "type": "main", "index": 0 }]]
+    },
+    "Apenas Ativos": {
+      "main": [[{ "node": "Reconsultar CNPJ", "type": "main", "index": 0 }]]
+    },
+    "Reconsultar CNPJ": {
+      "main": [[{ "node": "Situação Mudou?", "type": "main", "index": 0 }]]
+    },
+    "Situação Mudou?": {
+      "main": [
+        [{ "node": "Registrar Alerta", "type": "main", "index": 0 }],
+        [{ "node": "Registrar Conclusão", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "meta": {
+    "description": "Toda segunda-feira às 06h: busca leads ativos, reconsulta cada CNPJ na API do backend, detecta mudanças de situação cadastral e registra alertas. Toggle desligado — ativar após validar em staging.",
+    "templateId": "05-reconsulta-periodica"
+  },
+  "pinData": {},
+  "versionId": "1"
+}

@@ -1,0 +1,123 @@
+{
+  "name": "Cron Painel CNAE — Everest/FK's",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 7 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "44444444-0004-0004-0004-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "Toda segunda-feira às 07:00 (Bahia). Expressão n8n: Segundo Minuto Hora Dia Mês DiaSemana (1=Segunda)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/workflow-runs",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"workflowId\": \"cron-painel-cnae\"}",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000002",
+      "name": "Registrar Início",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:3000/painel/indicadores",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000003",
+      "name": "Buscar Indicadores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:3000/painel/cnae",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000004",
+      "name": "Buscar CNAEs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { totalEmpresas: $('Buscar Indicadores').first().json.totalEmpresas, totalLeads: $('Buscar Indicadores').first().json.totalLeads, cnaesUnicos: $('Buscar Indicadores').first().json.cnaesUnicos } }) }}",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000005",
+      "name": "Concluir",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'erro', resultado: { erro: $json.error?.message || 'Falha ao consolidar painel CNAE' } }) }}",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000006",
+      "name": "Registrar Erro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Registrar Início", "type": "main", "index": 0}]]
+    },
+    "Registrar Início": {
+      "main": [[{"node": "Buscar Indicadores", "type": "main", "index": 0}]]
+    },
+    "Buscar Indicadores": {
+      "main": [
+        [{"node": "Buscar CNAEs", "type": "main", "index": 0}],
+        [{"node": "Registrar Erro", "type": "main", "index": 0}]
+      ]
+    },
+    "Buscar CNAEs": {
+      "main": [[{"node": "Concluir", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "44444444-0004-0004-0004-000000000099",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "staticData": null,
+  "tags": ["fase-4", "painel", "cnae"]
+}

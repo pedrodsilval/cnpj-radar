@@ -1,4 +1,4 @@
-// Token storage utilities — localStorage is acceptable for an internal tool
+// Auth utilities — localStorage is acceptable for an internal tool
 
 export interface UsuarioLogado {
   id: string
@@ -38,4 +38,12 @@ export function estaLogado(): boolean {
 export function authHeaders(): Record<string, string> {
   const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// Drop-in replacement for fetch() that always sends the Bearer token
+export function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  return fetch(url, { ...init, headers })
 }
