@@ -60,7 +60,7 @@ export class CnpjService {
     private readonly cnaeRepo: Repository<Cnae>,
   ) {}
 
-  async consultarCnpj(cnpj: string): Promise<ResultadoConsulta> {
+  async consultarCnpj(cnpj: string, usuarioId?: string): Promise<ResultadoConsulta> {
     const sanitized = sanitizeCnpj(cnpj);
 
     if (!isValidCnpj(sanitized)) {
@@ -85,11 +85,11 @@ export class CnpjService {
       );
 
       if (!('error' in resultado)) {
-        await this.persistirResultado(sanitized, resultado, fonte.nome);
+        await this.persistirResultado(sanitized, resultado, fonte.nome, usuarioId);
         return resultado;
       }
 
-      await this.registrarConsulta(sanitized, null, fonte.nome, resultado.error);
+      await this.registrarConsulta(sanitized, null, fonte.nome, resultado.error, usuarioId);
 
       if (!ERROS_COM_FALLBACK.has(resultado.error)) {
         return resultado;
@@ -106,10 +106,11 @@ export class CnpjService {
     cnpj: string,
     resultado: Extract<ResultadoConsulta, { dados: unknown }>,
     fonteNome: string,
+    usuarioId?: string,
   ): Promise<void> {
     try {
       const empresa = await this.upsertEmpresa(resultado.dados as ReturnType<typeof normalizarCnpj>);
-      await this.registrarConsulta(cnpj, empresa.id, fonteNome, null);
+      await this.registrarConsulta(cnpj, empresa.id, fonteNome, null, usuarioId);
     } catch (err) {
       this.logger.error(`[CNPJ] ${cnpj} | Falha ao persistir: ${String(err)}`);
     }
@@ -174,12 +175,13 @@ export class CnpjService {
     empresaId: string | null,
     fonte: string,
     erro: string | null,
+    usuarioId?: string,
   ): Promise<void> {
-    const consulta = this.consultaRepo.create({ cnpj, empresaId, fonte, erro });
+    const consulta = this.consultaRepo.create({ cnpj, empresaId, fonte, erro, usuarioId: usuarioId ?? null });
     await this.consultaRepo.save(consulta);
   }
 
-  async consultarLote(cnpjs: string[]): Promise<{
+  async consultarLote(cnpjs: string[], usuarioId?: string): Promise<{
     total: number;
     sucesso: number;
     erros: number;
@@ -190,7 +192,7 @@ export class CnpjService {
     const resultados: Array<{ cnpj: string; ok: boolean; erro?: string }> = [];
 
     for (const cnpj of lista) {
-      const resultado = await this.consultarCnpj(cnpj);
+      const resultado = await this.consultarCnpj(cnpj, usuarioId);
       if ('error' in resultado) {
         resultados.push({ cnpj, ok: false, erro: resultado.error });
       } else {
