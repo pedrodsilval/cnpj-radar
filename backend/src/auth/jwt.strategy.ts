@@ -18,10 +18,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     @InjectRepository(Usuario)
     private readonly usuarioRepo: Repository<Usuario>,
   ) {
+    const secret = process.env.JWT_SECRET;
+    if (!secret && process.env.APP_ENV === 'production') {
+      throw new Error('JWT_SECRET não definido. Em produção é obrigatório — defina no .env de produção.');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET ?? 'cnpj-radar-secret-change-in-prod',
+      secretOrKey: secret ?? 'cnpj-radar-secret-change-in-prod',
     });
   }
 

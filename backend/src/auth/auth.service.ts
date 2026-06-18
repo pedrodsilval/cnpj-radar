@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -51,6 +51,9 @@ export class AuthService {
   }
 
   async criarUsuario(dto: CriarUsuarioDto): Promise<Omit<Usuario, 'senhaHash'>> {
+    if (!dto.senha || dto.senha.length < 8) {
+      throw new BadRequestException('A senha deve ter pelo menos 8 caracteres.');
+    }
     const existe = await this.usuarioRepo.findOne({ where: { email: dto.email.toLowerCase() } });
     if (existe) throw new ConflictException('E-mail já cadastrado.');
 
@@ -73,6 +76,9 @@ export class AuthService {
   }
 
   async alterarSenha(id: string, novaSenha: string): Promise<void> {
+    if (!novaSenha || novaSenha.length < 8) {
+      throw new BadRequestException('A senha deve ter pelo menos 8 caracteres.');
+    }
     const user = await this.usuarioRepo.findOneOrFail({ where: { id } });
     const senhaHash = await bcrypt.hash(novaSenha, 12);
     await this.usuarioRepo.update(id, { senhaHash, tokenVersion: user.tokenVersion + 1 });

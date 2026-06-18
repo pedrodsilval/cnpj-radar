@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { extname, join } from 'path';
+import { join } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { chromium } from 'playwright';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
@@ -203,8 +203,7 @@ export class CertidoesService {
     const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
     if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
 
-    const ext = extname(file.originalname) || '.pdf';
-    const filename = `${certidaoId}-${Date.now()}${ext}`;
+    const filename = `${certidaoId}-${Date.now()}.pdf`;
     const filepath = join(uploadDir, filename);
 
     writeFileSync(filepath, file.buffer);
@@ -302,6 +301,10 @@ export class CertidoesService {
 
     const dataGeracao = new Date().toLocaleString('pt-BR', { timeZone: 'America/Bahia' });
 
+    function esc(s: string): string {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function statusLabel(s: string): string {
       const m: Record<string, string> = {
         IRREGULAR: 'Irregular', NAO_CONSULTADA: 'Não consultada',
@@ -334,17 +337,17 @@ export class CertidoesService {
     const blocos = empresasPendentes.map((emp) => `
       <div class="empresa">
         <div class="empresa-header">
-          <span class="cnpj">${formatCnpj(emp.cnpj)}</span>
-          <span class="razao">${emp.razaoSocial}</span>
+          <span class="cnpj">${esc(formatCnpj(emp.cnpj))}</span>
+          <span class="razao">${esc(emp.razaoSocial)}</span>
         </div>
         <table>
           <thead><tr><th>Certidão</th><th>Status</th><th>Validade</th></tr></thead>
           <tbody>
             ${emp.itens.map((i) => `
               <tr>
-                <td>${i.label}</td>
-                <td><span class="pill" style="color:${statusColor(i.status)}">${statusLabel(i.status)}</span></td>
-                <td class="validade">${descValidade(i.diasParaVencer, i.validade)}</td>
+                <td>${esc(i.label)}</td>
+                <td><span class="pill" style="color:${esc(statusColor(i.status))}">${esc(statusLabel(i.status))}</span></td>
+                <td class="validade">${esc(descValidade(i.diasParaVencer, i.validade))}</td>
               </tr>`).join('')}
           </tbody>
         </table>

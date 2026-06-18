@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Header, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { extname } from 'path';
 import { CertidoesService } from './certidoes.service';
 import { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
 @Controller('certidoes')
@@ -59,8 +60,13 @@ export class CertidoesController {
     storage: memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
-      if (file.mimetype === 'application/pdf') cb(null, true);
-      else cb(new Error('Apenas arquivos PDF são aceitos.'), false);
+      // Valida MIME type E extensão — MIME type sozinho é controlado pelo cliente
+      const ext = extname(file.originalname).toLowerCase();
+      if (file.mimetype === 'application/pdf' && ext === '.pdf') {
+        cb(null, true);
+      } else {
+        cb(new Error('Apenas arquivos PDF são aceitos (.pdf).'), false);
+      }
     },
   }))
   upload(
