@@ -18,7 +18,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "seed:admin": "ts-node -r tsconfig-paths/register src/seed-admin.ts"
+    "seed:admin": "ts-node -r tsconfig-paths/register src/seed-admin.ts",
+    "seed:n8n": "ts-node -r tsconfig-paths/register src/seed-n8n.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -33,6 +34,8 @@
     "@types/pdfkit": "^0.17.6",
     "@xenova/transformers": "^2.17.2",
     "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "dejavu-fonts-ttf": "^2.37.3",
     "helmet": "^8.2.0",
     "jimp": "^1.6.1",

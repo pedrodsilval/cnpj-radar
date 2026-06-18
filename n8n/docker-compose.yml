@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   n8n:
     image: n8nio/n8n:latest
@@ -16,6 +14,9 @@ services:
       - N8N_ENCRYPTION_KEY=everest-fks-cnpj-radar-dev
       - GENERIC_TIMEZONE=America/Bahia
       - TZ=America/Bahia
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
+      - N8N_API_PASSWORD=${N8N_API_PASSWORD}
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - n8n_data:/home/node/.n8n
     # Necessário no Linux; no Windows com Docker Desktop funciona sem isso.

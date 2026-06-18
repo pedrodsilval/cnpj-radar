@@ -4,12 +4,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "0 0 6 * * 1"
-            }
-          ]
+          "interval": [{ "field": "cronExpression", "expression": "0 0 6 * * 1" }]
         }
       },
       "id": "cron-reconsulta",
@@ -20,14 +15,33 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.API_BASE_URL }}/leads",
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/auth/login",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
+        "options": {}
+      },
+      "id": "login-reconsulta",
+      "name": "Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:3000/leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
         "options": {}
       },
       "id": "buscar-leads",
       "name": "Buscar Leads Ativos",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 300]
+      "position": [680, 300]
     },
     {
       "parameters": {
@@ -38,7 +52,7 @@
       "name": "Iterar Leads",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [680, 300]
+      "position": [900, 300]
     },
     {
       "parameters": {
@@ -66,18 +80,22 @@
       "name": "Apenas Ativos",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2,
-      "position": [900, 300]
+      "position": [1120, 300]
     },
     {
       "parameters": {
-        "url": "={{ $env.API_BASE_URL }}/cnpj/{{ $json.cnpj }}",
+        "url": "=http://host.docker.internal:3000/cnpj/{{ $json.cnpj }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
         "options": {}
       },
       "id": "reconsultar-cnpj",
       "name": "Reconsultar CNPJ",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 300]
+      "position": [1340, 300]
     },
     {
       "parameters": {
@@ -99,11 +117,11 @@
       "name": "Situação Mudou?",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2,
-      "position": [1340, 300]
+      "position": [1560, 300]
     },
     {
       "parameters": {
-        "url": "={{ $env.API_BASE_URL }}/workflow-runs",
+        "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -124,11 +142,11 @@
       "name": "Registrar Alerta",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1560, 300]
+      "position": [1780, 300]
     },
     {
       "parameters": {
-        "url": "={{ $env.API_BASE_URL }}/workflow-runs",
+        "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -149,11 +167,14 @@
       "name": "Registrar Conclusão",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1560, 480]
+      "position": [1780, 480]
     }
   ],
   "connections": {
     "Toda Segunda às 06h": {
+      "main": [[{ "node": "Login", "type": "main", "index": 0 }]]
+    },
+    "Login": {
       "main": [[{ "node": "Buscar Leads Ativos", "type": "main", "index": 0 }]]
     },
     "Buscar Leads Ativos": {
@@ -176,15 +197,12 @@
     }
   },
   "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "errorWorkflow": ""
-  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "" },
   "staticData": null,
   "meta": {
-    "description": "Toda segunda-feira às 06h: busca leads ativos, reconsulta cada CNPJ na API do backend, detecta mudanças de situação cadastral e registra alertas. Toggle desligado — ativar após validar em staging.",
+    "description": "Toda segunda-feira às 06h: busca leads ativos, reconsulta cada CNPJ na API do backend, detecta mudanças de situação cadastral e registra alertas.",
     "templateId": "05-reconsulta-periodica"
   },
   "pinData": {},
-  "versionId": "1"
+  "versionId": "2"
 }

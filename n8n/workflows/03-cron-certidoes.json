@@ -4,12 +4,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "0 0 6 * * *"
-            }
-          ]
+          "interval": [{ "field": "cronExpression", "expression": "0 0 6 * * *" }]
         }
       },
       "id": "33333333-0003-0003-0003-000000000001",
@@ -17,6 +12,21 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/auth/login",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
+        "options": {}
+      },
+      "id": "33333333-0003-0003-0003-000000000007",
+      "name": "Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
     },
     {
       "parameters": {
@@ -35,34 +45,40 @@
       "name": "Registrar Início",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 300]
+      "position": [680, 300]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "http://host.docker.internal:3000/certidoes/consultar-lote",
-        "options": {
-          "timeout": 600000
-        }
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
+        "options": { "timeout": 600000 }
       },
       "id": "33333333-0003-0003-0003-000000000003",
       "name": "Consultar Certidões Lote",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 300],
+      "position": [900, 300],
       "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "method": "GET",
         "url": "http://host.docker.internal:3000/certidoes/alertas?dias=30",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
         "options": {}
       },
       "id": "33333333-0003-0003-0003-000000000004",
       "name": "Buscar Alertas",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300]
+      "position": [1120, 300]
     },
     {
       "parameters": {
@@ -81,7 +97,7 @@
       "name": "Concluir",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 300]
+      "position": [1340, 300]
     },
     {
       "parameters": {
@@ -100,11 +116,14 @@
       "name": "Registrar Erro",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 500]
+      "position": [1120, 500]
     }
   ],
   "connections": {
     "Schedule Trigger": {
+      "main": [[{"node": "Login", "type": "main", "index": 0}]]
+    },
+    "Login": {
       "main": [[{"node": "Registrar Início", "type": "main", "index": 0}]]
     },
     "Registrar Início": {
@@ -127,9 +146,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "versionId": "33333333-0003-0003-0003-000000000099",
-  "meta": {
-    "templateCredsSetupCompleted": true
-  },
+  "meta": { "templateCredsSetupCompleted": true },
   "pinData": {},
   "staticData": null,
   "tags": ["fase-3", "certidoes"]

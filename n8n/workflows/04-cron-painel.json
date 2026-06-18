@@ -4,12 +4,7 @@
     {
       "parameters": {
         "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "0 0 7 * * 1"
-            }
-          ]
+          "interval": [{ "field": "cronExpression", "expression": "0 0 7 * * 1" }]
         }
       },
       "id": "44444444-0004-0004-0004-000000000001",
@@ -17,7 +12,22 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [240, 300],
-      "notes": "Toda segunda-feira às 07:00 (Bahia). Expressão n8n: Segundo Minuto Hora Dia Mês DiaSemana (1=Segunda)."
+      "notes": "Toda segunda-feira às 07:00 (Bahia)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/auth/login",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
+        "options": {}
+      },
+      "id": "44444444-0004-0004-0004-000000000007",
+      "name": "Login",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
     },
     {
       "parameters": {
@@ -36,32 +46,40 @@
       "name": "Registrar Início",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 300]
+      "position": [680, 300]
     },
     {
       "parameters": {
         "method": "GET",
         "url": "http://host.docker.internal:3000/painel/indicadores",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
         "options": {}
       },
       "id": "44444444-0004-0004-0004-000000000003",
       "name": "Buscar Indicadores",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 300],
+      "position": [900, 300],
       "onError": "continueErrorOutput"
     },
     {
       "parameters": {
         "method": "GET",
         "url": "http://host.docker.internal:3000/painel/cnae",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $('Login').first().json.access_token }}" }]
+        },
         "options": {}
       },
       "id": "44444444-0004-0004-0004-000000000004",
       "name": "Buscar CNAEs",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 300]
+      "position": [1120, 300]
     },
     {
       "parameters": {
@@ -80,7 +98,7 @@
       "name": "Concluir",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1120, 300]
+      "position": [1340, 300]
     },
     {
       "parameters": {
@@ -99,11 +117,14 @@
       "name": "Registrar Erro",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 500]
+      "position": [1120, 500]
     }
   ],
   "connections": {
     "Schedule Trigger": {
+      "main": [[{"node": "Login", "type": "main", "index": 0}]]
+    },
+    "Login": {
       "main": [[{"node": "Registrar Início", "type": "main", "index": 0}]]
     },
     "Registrar Início": {
@@ -126,9 +147,7 @@
     "callerPolicy": "workflowsFromSameOwner"
   },
   "versionId": "44444444-0004-0004-0004-000000000099",
-  "meta": {
-    "templateCredsSetupCompleted": true
-  },
+  "meta": { "templateCredsSetupCompleted": true },
   "pinData": {},
   "staticData": null,
   "tags": ["fase-4", "painel", "cnae"]
