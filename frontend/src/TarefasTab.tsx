@@ -236,9 +236,10 @@ export function TarefasTab() {
     await carregar()
   }
 
-  const pendentes   = tarefas.filter(t => t.status === 'pendente' || t.status === 'em_andamento')
+  const emAndamento = tarefas.filter(t => t.status === 'em_andamento')
+  const soPendentes = tarefas.filter(t => t.status === 'pendente')
   const concluidas  = tarefas.filter(t => t.status === 'concluida' || t.status === 'cancelada')
-  const mostrar     = filtroStatus ? tarefas : [...pendentes, ...concluidas]
+  const mostrar     = filtroStatus ? tarefas : [...emAndamento, ...soPendentes, ...concluidas]
 
   return (
     <>
@@ -285,17 +286,60 @@ export function TarefasTab() {
               Criar primeira tarefa
             </button>
           </div>
-        ) : (
+        ) : filtroStatus ? (
           <div className="space-y-2">
             {mostrar.map(t => (
-              <TarefaCard
-                key={t.id}
-                t={t}
+              <TarefaCard key={t.id} t={t}
                 onEditar={() => setModal({ aberto: true, tarefa: t })}
                 onConcluir={() => concluir(t)}
                 onRemover={() => remover(t.id)}
               />
             ))}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {emAndamento.length > 0 && (
+              <div>
+                <p className="text-xs font-display font-bold text-blue-600 uppercase tracking-widest mb-2">Em andamento</p>
+                <div className="space-y-2">
+                  {emAndamento.map(t => (
+                    <TarefaCard key={t.id} t={t}
+                      onEditar={() => setModal({ aberto: true, tarefa: t })}
+                      onConcluir={() => concluir(t)}
+                      onRemover={() => remover(t.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {soPendentes.length > 0 && (
+              <div>
+                <p className="text-xs font-display font-bold text-amber-600 uppercase tracking-widest mb-2">Pendentes</p>
+                <div className="space-y-2">
+                  {soPendentes.map(t => (
+                    <TarefaCard key={t.id} t={t}
+                      onEditar={() => setModal({ aberto: true, tarefa: t })}
+                      onConcluir={() => concluir(t)}
+                      onRemover={() => remover(t.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {concluidas.length > 0 && (
+              <div>
+                <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-2">Concluídas / Canceladas</p>
+                <div className="space-y-2">
+                  {concluidas.map(t => (
+                    <TarefaCard key={t.id} t={t}
+                      onEditar={() => setModal({ aberto: true, tarefa: t })}
+                      onConcluir={() => concluir(t)}
+                      onRemover={() => remover(t.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
