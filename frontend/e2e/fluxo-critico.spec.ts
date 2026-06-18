@@ -67,38 +67,42 @@ async function setupAuth(page: Page) {
 }
 
 async function mockRotas(page: Page) {
-  await page.route('/cnpj/30327128000125', (r: Route) =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RESULTADO_CNPJ) }),
-  )
-  await page.route('/cnpj/**', (r: Route) =>
+  // Playwright usa "último registrado = maior prioridade".
+  // Registrar catch-alls primeiro e específicos por último.
+
+  // catch-alls (menor prioridade)
+  await page.route('**/cnpj/**', (r: Route) =>
     r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'CNPJ_NAO_ENCONTRADO' }) }),
   )
-  await page.route('/leads/30327128000125', (r: Route) => {
+  await page.route('**/dashboard**', (r: Route) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      totalConsultasMes: 0, totalLeads: 0, totalClientes: 0, taxaConversao: 0,
+      oportunidadesParadas: 0, certidoesCriticas: 0, tarefasPendentes: 0,
+      historicoMensal: [], topCnaes: [], topConsultores: [],
+    }) }),
+  )
+  await page.route('**/certidoes/alertas**', (r: Route) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ irregulares: [], vencendo: [] }) }),
+  )
+
+  // específicas (maior prioridade — registradas por último, chamadas primeiro)
+  await page.route('**/cnpj/30327128000125', (r: Route) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RESULTADO_CNPJ) }),
+  )
+  await page.route('**/leads/30327128000125', (r: Route) => {
     if (r.request().method() === 'POST')
       return r.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(LEAD_RESPONSE) })
     return r.continue()
   })
-  await page.route('/leads/lead-abc123/status', (r: Route) => {
+  await page.route('**/leads/lead-abc123/status', (r: Route) => {
     if (r.request().method() === 'PATCH') {
       const updated = { ...LEAD_RESPONSE, status: 'em_contato' }
       return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(updated) })
     }
     return r.continue()
   })
-  await page.route('/leads/lead-abc123/proposta', (r: Route) =>
+  await page.route('**/leads/lead-abc123/proposta', (r: Route) =>
     r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(PROPOSTA_RESPONSE) }),
-  )
-  // dashboard e outros endpoints que o app carrega ao iniciar
-  await page.route('/dashboard', (r: Route) =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-      totalConsultasMes: 0, totalLeads: 0, totalClientes: 0, taxaConversao: 0,
-      oportunidadesParadas: 0, certidoesCriticas: 0, tarefasPendentes: 0,
-      historicoMensal: [], topCnaes: [], topConsultores: [],
-    })
-    }),
-  )
-  await page.route('/certidoes/alertas', (r: Route) =>
-    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ irregulares: [], vencendo: [] }) }),
   )
 }
 
@@ -137,16 +141,20 @@ test('exibe erro para campo vazio', async ({ page }) => {
   await expect(page.getByRole('alert')).toContainText('Informe o CNPJ para consultar.')
 })
 
-test('botão Consultar fica desabilitado durante operação em andamento', async ({ page }) => {
-  // Atrasa a resposta para verificar estado de loading
-  await page.route('/cnpj/30327128000125', async (r: Route) => {
-    await new Promise(res => setTimeout(res, 300))
+test('botão mostra "Consultando…" e fica desabilitado durante o fetch', async ({ page }) => {
+  // Delay de 2s para dar tempo de observar o estado intermediário
+  await page.route('**/cnpj/30327128000125', async (r: Route) => {
+    await new Promise(res => setTimeout(res, 2000))
     await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RESULTADO_CNPJ) })
   })
   await page.goto('/')
   await page.fill('#cnpj-input', '30327128000125')
   await page.click('button[type=submit]')
-  await expect(page.getByRole('button', { name: /Consultar CNPJ/i })).toBeDisabled()
+  // Enquanto o fetch está pendente, o botão muda de texto e fica disabled
+  const btnCarregando = page.getByRole('button', { name: /Consultando/i })
+  await expect(btnCarregando).toBeVisible()
+  await expect(btnCarregando).toBeDisabled()
+  // Após a resposta, volta ao estado normal
   await expect(page.getByText('EVEREST GESTAO CONTABIL E EMPRESARIAL LTDA')).toBeVisible()
   await expect(page.getByRole('button', { name: /Consultar CNPJ/i })).toBeEnabled()
 })
@@ -165,7 +173,7 @@ test('fluxo completo: consultar → salvar lead → ver scores', async ({ page }
 
   // 3. Scores visíveis na aba scores (ativa automaticamente após save)
   await expect(page.getByText('Score Cadastral')).toBeVisible()
-  await expect(page.getByText('85')).toBeVisible()
+  await expect(page.getByText('85', { exact: true })).toBeVisible()
   await expect(page.getByText('Score Comercial')).toBeVisible()
   await expect(page.getByText('Empresa com bom perfil cadastral')).toBeVisible()
 })
