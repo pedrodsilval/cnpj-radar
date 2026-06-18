@@ -30,9 +30,9 @@ Este é o documento-âncora do agente. Leia-o inteiro uma vez por sessão. Para 
 
 **O que é:** plataforma interna de inteligência comercial e cadastral para a Everest/FK's (contabilidade em Salvador/BA). Consulta CNPJs, valida e normaliza dados, cruza com a base de clientes, gera scores e recomendação de próxima ação, organiza regularidade fiscal/documental, alimenta um painel de mercado por CNAE e apoia onboarding.
 
-**O que é hoje:** protótipo React de consulta de CNPJ com lógica no frontend, sem backend, banco, autenticação, testes ou persistência.
+**O que é hoje (jun/2026):** plataforma operacional com todas as 5 fases implementadas. Backend NestJS com autenticação JWT + RBAC, banco Supabase (12 tabelas), scraping de certidões, geração de PDF, pipeline comercial com n8n, painel de mercado por CNAE, dashboard executivo, módulo de tarefas e relatórios por consultor. Testes Vitest (15 unit) + Playwright E2E (9 testes, fluxo crítico). Pronto para primeiro deploy em produção — ver migrations em `backend/migrations/`.
 
-**O que deve virar:** plataforma operacional em 5 fases. Ver `docs/arquitetura/00-visao-geral.md`.
+**O que deve virar:** produto comercial ofertado a outras contabilidades. Ver `docs/arquitetura/00-visao-geral.md`.
 
 **Trajetória (decisão de produto):** o sistema **inicia como ferramenta interna** da Everest/FK's e **evoluirá para produto comercial**, ofertado a outras contabilidades/empresas por meio de um site. Isso não muda o que é construído nas fases iniciais, mas define o destino: decisões de arquitetura daqui em diante devem ser tomadas de forma a **não bloquear a virada para produto**. Implicações concretas a manter no radar: (a) isolamento de dados entre clientes (multi-tenancy) será necessário — não acoplar dados a um único tenant implícito; (b) login/autenticação, hoje planejado para a Fase 5, provavelmente precisará ser antecipado quando a virada se aproximar; (c) a licença da API de dados precisa permitir uso comercial/revenda antes de produtizar (ver "Fontes de dados e autoridade"); (d) obrigações de LGPD, fiscal e suporte nascem com o produto, não com a ferramenta interna. Enquanto ferramenta interna, nada disso bloqueia o avanço — são pontos a decidir no momento da transição.
 
@@ -44,12 +44,12 @@ Este é o documento-âncora do agente. Leia-o inteiro uma vez por sessão. Para 
 
 | Camada | Tecnologia | Observação |
 | --- | --- | --- |
-| Frontend | React + TypeScript | App separado do backend. Migração do código atual em andamento. |
+| Frontend | React + TypeScript | App separado do backend. Estados agrupados por domínio (ConsultaState, LeadState, etc.) + queryIdRef para cancelar callbacks obsoletos. |
 | Backend | NestJS (standalone) | Dono da regra. Ver seção "Arquitetura" abaixo. |
 | Banco | PostgreSQL / Supabase | 12 tabelas — ver schema abaixo. |
-| Cache / estado | React Query ou SWR | No frontend. |
+| Cache / estado | fetch direto + useState | Frontend usa fetch + apiFetch (Bearer token automático). React Query/SWR não foi adotado. |
 | Validação | Zod | Frontend e backend. |
-| Testes | Vitest + React Testing Library + Playwright + MSW | — |
+| Testes | Vitest + React Testing Library + Playwright | 15 testes unit + 9 E2E. `npm test` e `npm run test:e2e` dentro de `frontend/`. |
 | Automação | n8n | Sempre cliente da API do backend, nunca direto nos serviços externos. |
 
 ### Schema do banco (12 tabelas)
@@ -165,11 +165,13 @@ Estas regras nunca são violadas, independentemente do contexto da tarefa:
 
 | Fase | Nome | n8n | Status |
 | --- | --- | --- | --- |
-| 1 | MVP confiável | ✗ | Próxima |
-| 2 | Inteligência comercial | ✓ (entra aqui) | — |
-| 3 | Regularidade assistida | ✓ | — |
-| 4 | Painel CNAE e mercado | ✓ | — |
-| 5 | Plataforma operacional | ✓ (orquestração plena) | — |
+| 1 | MVP confiável | ✗ | ✅ Concluída |
+| 2 | Inteligência comercial | ✓ (entra aqui) | ✅ Concluída |
+| 3 | Regularidade assistida | ✓ | ✅ Concluída (CND Federal aguarda 2captcha) |
+| 4 | Painel CNAE e mercado | ✓ | ✅ Concluída (taxa de penetração bloqueada pela base de clientes) |
+| 5 | Plataforma operacional | ✓ (orquestração plena) | ✅ Concluída — pendentes: 5.5 CRM (bloqueado) e 5.10 n8n orquestração plena |
+
+**Sistema pronto para produção.** Próximo passo: primeiro deploy. Ver migrations em `backend/migrations/`.
 
 Fluxogramas detalhados e dependências entre entregas: `docs/roadmap/`.
 Tabela de sequenciamento completa (ordem, dependência, esforço P/M/G): `docs/sequenciamento.md`.
@@ -178,9 +180,9 @@ Tabela de sequenciamento completa (ordem, dependência, esforço P/M/G): `docs/s
 
 ## Decisões registradas
 
-### #1 — Login: Fase 5
-Login obrigatório e perfis completos chegam na Fase 5. As Fases 2–4 já executam ações sensíveis (envio a CRM, WhatsApp, e-mail) sem controle de perfil.
-**Mitigação obrigatória:** construir os workflows normalmente, mas manter passos de envio externo **desabilitados ou com confirmação manual** até existir autenticação. Orquestração pronta; saída automática de dados só ligada na Fase 5.
+### #1 — Login: ✅ Implementado na Fase 5
+JWT com `expiresIn: '8h'`, bcrypt (salt 12), `JwtAuthGuard` global, `RolesGuard` global, 5 perfis (administrador/comercial/financeiro/consultor/leitura). Brute-force protection: ThrottlerGuard no login (5 req/60s). Invalidação de token por `token_version` ao alterar senha. Logs de autenticação com IP. Seed: `cd backend && npm run seed:admin`.
+**JWT_SECRET**: alterar para valor forte antes do primeiro deploy em produção.
 
 ### #2 — Base de clientes: em aberto [RESOLVER ANTES DA FASE 2]
 Descobrir antes de iniciar a Fase 2: (a) onde a base vive — planilha, sistema contábil ou CRM; (b) formato de exportação; (c) chave de cruzamento (presumivelmente CNPJ). Determina se a integração é esforço M ou subprojeto. Bloqueia score comercial e motor de recomendação.
