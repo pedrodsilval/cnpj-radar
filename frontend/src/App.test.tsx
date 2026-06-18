@@ -1,7 +1,25 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { vi, describe, it, expect, afterEach } from 'vitest'
 import App from './App'
+
+// Simula usuário logado — sem isso o App renderiza a LoginPage
+vi.mock('./auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./auth')>()
+  return {
+    ...actual,
+    estaLogado: () => true,
+    getUsuario: () => ({ id: 'u1', nome: 'Teste', email: 'teste@teste.com', perfil: 'administrador' as const }),
+    getToken: () => 'fake-token',
+    apiFetch: (url: string, init?: RequestInit) => fetch(url, init),
+  }
+})
+
+// Suprime o fetch background do hook de alertas — irrelevante para estes testes
+vi.mock('./AlertasTab', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./AlertasTab')>()
+  return { ...actual, useContagemAlertas: () => 0 }
+})
 
 const RESULTADO_SUCESSO = {
   dados: {
@@ -39,7 +57,7 @@ const RESULTADO_SUCESSO = {
 }
 
 function mockFetch(status: number, body: unknown) {
-  return vi.spyOn(global, 'fetch').mockResolvedValueOnce({
+  return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
@@ -68,7 +86,7 @@ describe('App', () => {
     render(<App />)
     await userEvent.type(screen.getByLabelText(/CNPJ da empresa/i), '30.327.128/0001-25')
     await userEvent.click(screen.getByRole('button', { name: /Consultar CNPJ/i }))
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/cnpj/30327128000125'))
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith('/cnpj/30327128000125', undefined))
   })
 
   it('exibe razão social e nome fantasia após consulta bem-sucedida', async () => {
@@ -137,7 +155,7 @@ describe('App', () => {
   })
 
   it('exibe mensagem de erro ao falhar a requisição por exceção de rede', async () => {
-    vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Network error'))
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'))
     render(<App />)
     await userEvent.type(screen.getByLabelText(/CNPJ da empresa/i), '11222333000181')
     await userEvent.click(screen.getByRole('button', { name: /Consultar CNPJ/i }))
