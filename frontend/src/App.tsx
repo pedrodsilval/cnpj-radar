@@ -693,7 +693,6 @@ function App() {
           <NavItem label="Painel de Mercado" active={vista === 'painel'} onClick={() => setVista('painel')} />
           <NavItem label="Leads"         disabled />
           <NavItem label="Clientes"      disabled />
-          <NavItem label="Relatórios"    disabled />
         </nav>
 
         <div className="p-3 border-t border-surface/10 space-y-0.5">
