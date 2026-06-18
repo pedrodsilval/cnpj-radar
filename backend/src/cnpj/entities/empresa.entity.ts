@@ -8,7 +8,6 @@ export class Empresa {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index()
   @Column({ unique: true, type: 'varchar', length: 14 })
   cnpj: string;
 
