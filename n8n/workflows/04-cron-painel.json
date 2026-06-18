@@ -26,6 +26,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"workflowId\": \"cron-painel-cnae\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "44444444-0004-0004-0004-000000000002",
@@ -66,6 +70,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { totalEmpresas: $('Buscar Indicadores').first().json.totalEmpresas, totalLeads: $('Buscar Indicadores').first().json.totalLeads, cnaesUnicos: $('Buscar Indicadores').first().json.cnaesUnicos } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "44444444-0004-0004-0004-000000000005",
@@ -81,6 +89,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'erro', resultado: { erro: $json.error?.message || 'Falha ao consolidar painel CNAE' } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "44444444-0004-0004-0004-000000000006",

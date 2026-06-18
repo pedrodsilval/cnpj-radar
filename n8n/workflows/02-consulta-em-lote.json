@@ -16,6 +16,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"workflowId\": \"consulta-em-lote\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "22222222-0002-0002-0002-000000000002",
@@ -48,6 +52,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"status\": \"concluido\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "22222222-0002-0002-0002-000000000004",

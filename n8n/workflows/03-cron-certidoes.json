@@ -25,6 +25,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"workflowId\": \"cron-certidoes\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "33333333-0003-0003-0003-000000000002",
@@ -67,6 +71,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { total: $('Consultar Certidões Lote').first().json.total, consultados: $('Consultar Certidões Lote').first().json.consultados, erros: $('Consultar Certidões Lote').first().json.erros.length, alertas: $('Buscar Alertas').first().json.length } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "33333333-0003-0003-0003-000000000005",
@@ -82,6 +90,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'erro', resultado: { erro: $json.error?.message || 'Timeout ou falha ao consultar certidões em lote' } }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "33333333-0003-0003-0003-000000000006",

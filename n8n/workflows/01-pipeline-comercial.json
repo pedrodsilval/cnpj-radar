@@ -17,6 +17,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"workflowId\": \"pipeline-comercial\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "11111111-0001-0001-0001-000000000002",
@@ -70,6 +74,10 @@
         "sendBody": true,
         "contentType": "json",
         "jsonBody": "={\"status\": \"concluido\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
         "options": {}
       },
       "id": "11111111-0001-0001-0001-000000000006",
