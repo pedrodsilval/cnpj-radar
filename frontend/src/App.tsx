@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { CertidoesTab } from './CertidoesTab'
 import { CredenciaisTab } from './CredenciaisTab'
 import { AlertasTab, useContagemAlertas } from './AlertasTab'
@@ -84,6 +84,21 @@ type Tab = 'cadastro' | 'scores' | 'socios' | 'certidoes'
 type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas' | 'relatorios'
 type StatusLead = 'idle' | 'salvando' | 'salvo' | 'erro'
 type StatusAtualizacao = 'idle' | 'salvando' | 'erro'
+
+interface ConsultaState {
+  carregando: boolean
+  erro: string | null
+  resultado: ResultadoSucesso | null
+  cnpjConsultado: string
+}
+interface LeadState { status: StatusLead; erro: string | null; data: LeadData | null }
+interface AtualizacaoState { status: StatusAtualizacao; erro: string | null }
+interface PropostaState { carregando: boolean; dados: PropostaData | null; leadId: string | null }
+
+const CONSULTA_IDLE: ConsultaState      = { carregando: false, erro: null, resultado: null, cnpjConsultado: '' }
+const LEAD_IDLE: LeadState              = { status: 'idle', erro: null, data: null }
+const ATUALIZACAO_IDLE: AtualizacaoState = { status: 'idle', erro: null }
+const PROPOSTA_IDLE: PropostaState      = { carregando: false, dados: null, leadId: null }
 
 const LEAD_STATUS_LABELS: Record<string, string> = {
   novo:              'Novo',
@@ -513,23 +528,16 @@ function ModalAlterarSenha({ usuario, onFechar }: { usuario: UsuarioLogado; onFe
 // --- App ---
 
 function App() {
-  const [logado, setLogado]                         = useState(estaLogado)
-  const [modalSenha, setModalSenha]                 = useState(false)
-  const [vista, setVista]                           = useState<Vista>('cnpj')
-  const [cnpj, setCnpj]                             = useState('')
-  const [erro, setErro]                             = useState<string | null>(null)
-  const [carregando, setCarregando]                 = useState(false)
-  const [resultado, setResultado]                   = useState<ResultadoSucesso | null>(null)
-  const [cnpjConsultado, setCnpjConsultado]         = useState('')
-  const [activeTab, setActiveTab]                   = useState<Tab>('cadastro')
-  const [statusLead, setStatusLead]                 = useState<StatusLead>('idle')
-  const [erroLead, setErroLead]                     = useState<string | null>(null)
-  const [leadData, setLeadData]                     = useState<LeadData | null>(null)
-  const [statusAtualizacao, setStatusAtualizacao]   = useState<StatusAtualizacao>('idle')
-  const [erroStatus, setErroStatus]                 = useState<string | null>(null)
-  const [propostaCarregando, setPropostaCarregando] = useState(false)
-  const [propostaDados, setPropostaDados]           = useState<PropostaData | null>(null)
-  const [propostaLeadId, setPropostaLeadId]         = useState<string | null>(null)
+  const [logado, setLogado]           = useState(estaLogado)
+  const [modalSenha, setModalSenha]   = useState(false)
+  const [vista, setVista]             = useState<Vista>('cnpj')
+  const [cnpj, setCnpj]               = useState('')
+  const [consulta, setConsulta]       = useState<ConsultaState>(CONSULTA_IDLE)
+  const [activeTab, setActiveTab]     = useState<Tab>('cadastro')
+  const [lead, setLead]               = useState<LeadState>(LEAD_IDLE)
+  const [atualizacao, setAtualizacao] = useState<AtualizacaoState>(ATUALIZACAO_IDLE)
+  const [proposta, setProposta]       = useState<PropostaState>(PROPOSTA_IDLE)
+  const queryIdRef                    = useRef(0)
   const contagemAlertas                             = useContagemAlertas()
 
   const usuario = getUsuario()
@@ -540,110 +548,105 @@ function App() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setErro(null)
-    setResultado(null)
-    setStatusLead('idle')
-    setErroLead(null)
-    setLeadData(null)
-    setStatusAtualizacao('idle')
-    setErroStatus(null)
-    setPropostaDados(null)
+    const qid = ++queryIdRef.current
+    setConsulta(CONSULTA_IDLE)
+    setLead(LEAD_IDLE)
+    setAtualizacao(ATUALIZACAO_IDLE)
+    setProposta(PROPOSTA_IDLE)
     setActiveTab('cadastro')
 
     const limpo = sanitizar(cnpj)
     if (!limpo) {
-      setErro('Informe o CNPJ para consultar.')
+      setConsulta(prev => ({ ...prev, erro: 'Informe o CNPJ para consultar.' }))
       return
     }
 
-    setCarregando(true)
+    setConsulta(prev => ({ ...prev, carregando: true }))
     try {
       const res  = await apiFetch(`/cnpj/${limpo}`)
       const json = await res.json()
+      if (qid !== queryIdRef.current) return
 
       if (!res.ok || 'error' in json) {
         const codigo = (json as { error: string }).error
-        setErro(MENSAGENS_ERRO[codigo] ?? 'Não foi possível consultar agora. Tente novamente.')
+        setConsulta(prev => ({ ...prev, erro: MENSAGENS_ERRO[codigo] ?? 'Não foi possível consultar agora. Tente novamente.' }))
         return
       }
 
-      setResultado(json as ResultadoSucesso)
-      setCnpjConsultado(limpo)
+      setConsulta(prev => ({ ...prev, resultado: json as ResultadoSucesso, cnpjConsultado: limpo }))
     } catch {
-      setErro('Não foi possível consultar agora. Verifique sua conexão.')
+      if (qid !== queryIdRef.current) return
+      setConsulta(prev => ({ ...prev, erro: 'Não foi possível consultar agora. Verifique sua conexão.' }))
     } finally {
-      setCarregando(false)
+      if (qid === queryIdRef.current) setConsulta(prev => ({ ...prev, carregando: false }))
     }
   }
 
   async function handleGerarProposta() {
-    if (!leadData) return
-    setPropostaCarregando(true)
+    if (!lead.data) return
+    const leadId = lead.data.id
+    setProposta({ carregando: true, dados: null, leadId: null })
     try {
-      const res = await apiFetch(`/leads/${leadData.id}/proposta`)
+      const res = await apiFetch(`/leads/${leadId}/proposta`)
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        setErroStatus((json as { message?: string }).message ?? 'Não foi possível gerar a proposta.')
+        setProposta(PROPOSTA_IDLE)
+        setAtualizacao(prev => ({ ...prev, erro: (json as { message?: string }).message ?? 'Não foi possível gerar a proposta.' }))
         return
       }
-      setPropostaDados((await res.json()) as PropostaData)
-      setPropostaLeadId(leadData.id)
+      setProposta({ carregando: false, dados: (await res.json()) as PropostaData, leadId })
     } catch {
-      setErroStatus('Não foi possível gerar a proposta. Verifique sua conexão.')
-    } finally {
-      setPropostaCarregando(false)
+      setProposta(PROPOSTA_IDLE)
+      setAtualizacao(prev => ({ ...prev, erro: 'Não foi possível gerar a proposta. Verifique sua conexão.' }))
     }
   }
 
   async function handleAtualizarStatus(novoStatus: string) {
-    if (!leadData) return
-    setStatusAtualizacao('salvando')
-    setErroStatus(null)
+    if (!lead.data) return
+    setAtualizacao({ status: 'salvando', erro: null })
     try {
-      const res = await apiFetch(`/leads/${leadData.id}/status`, {
+      const res = await apiFetch(`/leads/${lead.data.id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: novoStatus }),
       })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        setErroStatus((json as { message?: string }).message ?? 'Não foi possível atualizar o status.')
-        setStatusAtualizacao('erro')
+        setAtualizacao({ status: 'erro', erro: (json as { message?: string }).message ?? 'Não foi possível atualizar o status.' })
         return
       }
       const atualizado = (await res.json()) as LeadData
-      setLeadData(atualizado)
-      setPropostaDados(null)
-      setStatusAtualizacao('idle')
+      setLead(prev => ({ ...prev, data: atualizado }))
+      setProposta(PROPOSTA_IDLE)
+      setAtualizacao(ATUALIZACAO_IDLE)
     } catch {
-      setErroStatus('Não foi possível atualizar o status. Verifique sua conexão.')
-      setStatusAtualizacao('erro')
+      setAtualizacao({ status: 'erro', erro: 'Não foi possível atualizar o status. Verifique sua conexão.' })
     }
   }
 
   async function handleSalvarLead() {
-    setStatusLead('salvando')
-    setErroLead(null)
+    const qid = queryIdRef.current
+    setLead(prev => ({ ...prev, status: 'salvando', erro: null }))
     try {
-      const res = await apiFetch(`/leads/${cnpjConsultado}`, { method: 'POST' })
+      const res = await apiFetch(`/leads/${consulta.cnpjConsultado}`, { method: 'POST' })
+      if (qid !== queryIdRef.current) return
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
-        setErroLead((json as { message?: string }).message ?? 'Não foi possível salvar o lead.')
-        setStatusLead('erro')
+        setLead(prev => ({ ...prev, status: 'erro', erro: (json as { message?: string }).message ?? 'Não foi possível salvar o lead.' }))
         return
       }
-      const lead = (await res.json()) as LeadData
-      setLeadData(lead)
-      setStatusLead('salvo')
+      const savedLead = (await res.json()) as LeadData
+      setLead({ status: 'salvo', erro: null, data: savedLead })
       setActiveTab('scores')
     } catch {
-      setErroLead('Não foi possível salvar o lead. Verifique sua conexão.')
-      setStatusLead('erro')
+      if (qid !== queryIdRef.current) return
+      setLead(prev => ({ ...prev, status: 'erro', erro: 'Não foi possível salvar o lead. Verifique sua conexão.' }))
     }
   }
 
-  const dados = resultado?.dados
-  const meta  = resultado?.metadados
+  const dados   = consulta.resultado?.dados
+  const meta    = consulta.resultado?.metadados
+  const ocupado = consulta.carregando || lead.status === 'salvando' || atualizacao.status === 'salvando' || proposta.carregando
 
   const enderecoCompleto = dados
     ? [
@@ -661,8 +664,8 @@ function App() {
 
   return (
     <>
-    {propostaDados && (
-      <PropostaModal dados={propostaDados} leadId={propostaLeadId!} onFechar={() => { setPropostaDados(null); setPropostaLeadId(null) }} />
+    {proposta.dados && (
+      <PropostaModal dados={proposta.dados} leadId={proposta.leadId!} onFechar={() => setProposta(PROPOSTA_IDLE)} />
     )}
     {modalSenha && usuario && (
       <ModalAlterarSenha usuario={usuario} onFechar={() => setModalSenha(false)} />
@@ -777,22 +780,22 @@ function App() {
                   value={cnpj}
                   onChange={(e) => setCnpj(e.target.value)}
                   placeholder="00.000.000/0000-00"
-                  aria-describedby={erro ? 'cnpj-erro' : undefined}
-                  aria-invalid={erro ? true : undefined}
+                  aria-describedby={consulta.erro ? 'cnpj-erro' : undefined}
+                  aria-invalid={consulta.erro ? true : undefined}
                   className="w-full border border-gray-200 rounded-2xl px-5 py-3.5 font-body text-depth text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent focus:shadow-[0_0_0_4px_rgba(37,99,235,0.15)] placeholder:text-gray-400"
                 />
               </div>
               <button
                 type="submit"
-                disabled={carregando}
-                aria-busy={carregando || undefined}
+                disabled={ocupado}
+                aria-busy={ocupado || undefined}
                 className="bg-accent text-depth font-display font-bold text-sm px-7 py-3.5 rounded-2xl hover:bg-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
-                {carregando ? 'Consultando…' : 'Consultar CNPJ'}
+                {consulta.carregando ? 'Consultando…' : 'Consultar CNPJ'}
               </button>
             </form>
 
-            {erro && (
+            {consulta.erro && (
               <p
                 id="cnpj-erro"
                 role="alert"
@@ -800,7 +803,7 @@ function App() {
                 className="mt-3 text-sm text-danger flex items-center gap-1.5"
               >
                 <span aria-hidden="true">⚠</span>
-                {erro}
+                {consulta.erro}
               </p>
             )}
           </section>
@@ -819,7 +822,7 @@ function App() {
           )}
 
           {/* Result card */}
-          {resultado && dados && meta && (
+          {consulta.resultado && dados && meta && (
             <section
               className="bg-white rounded-[28px] shadow-2xl overflow-hidden"
               aria-label="Resultado da consulta"
@@ -834,7 +837,7 @@ function App() {
                   <p className="text-blue-200 text-sm mt-0.5">{dados.nomeFantasia}</p>
                 )}
                 <div className="flex flex-wrap items-center gap-2 mt-2">
-                  <span className="font-body text-blue-200 text-xs">{formatarCnpj(cnpjConsultado)}</span>
+                  <span className="font-body text-blue-200 text-xs">{formatarCnpj(consulta.cnpjConsultado)}</span>
                   <StatusBadge status={dados.situacaoCadastral} onDark />
                   {dados.porte && (
                     <span className="text-xs text-blue-200 font-body">{dados.porte}</span>
@@ -869,7 +872,7 @@ function App() {
                       }`}
                     >
                       {labels[tab]}
-                      {tab === 'scores' && statusLead === 'salvo' && (
+                      {tab === 'scores' && lead.status === 'salvo' && (
                         <span
                           className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-accent"
                           aria-label="scores disponíveis"
@@ -927,19 +930,19 @@ function App() {
                 )}
 
                 {activeTab === 'scores' && (
-                  leadData ? (
+                  lead.data ? (
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <ScoreCard label="Score Cadastral"   value={leadData.scoreCadastral}  tipo="cadastral" />
-                        <ScoreCard label="Score Comercial"   value={leadData.scoreComercial}  tipo="comercial" />
-                        <ScoreCard label="Score de Atenção"  value={leadData.scoreAtencao}    tipo="atencao"   />
+                        <ScoreCard label="Score Cadastral"   value={lead.data.scoreCadastral}  tipo="cadastral" />
+                        <ScoreCard label="Score Comercial"   value={lead.data.scoreComercial}  tipo="comercial" />
+                        <ScoreCard label="Score de Atenção"  value={lead.data.scoreAtencao}    tipo="atencao"   />
                       </div>
-                      {leadData.recomendacao && (
+                      {lead.data.recomendacao && (
                         <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
                           <p className="font-display font-bold text-depth text-xs uppercase tracking-widest mb-1">
                             Recomendação
                           </p>
-                          <p className="font-body text-depth text-sm">{leadData.recomendacao}</p>
+                          <p className="font-body text-depth text-sm">{lead.data.recomendacao}</p>
                         </div>
                       )}
                     </div>
@@ -985,7 +988,7 @@ function App() {
                 )}
 
                 {activeTab === 'certidoes' && (
-                  <CertidoesTab cnpj={cnpjConsultado} />
+                  <CertidoesTab cnpj={consulta.cnpjConsultado} />
                 )}
 
               </div>
@@ -994,15 +997,15 @@ function App() {
               <div className="px-6 py-4 bg-gray-50 border-t border-gray-100">
                 <div className="flex flex-wrap items-center gap-3 mb-3">
 
-                  {statusLead !== 'salvo' ? (
+                  {lead.status !== 'salvo' ? (
                     <button
                       type="button"
                       onClick={handleSalvarLead}
-                      disabled={statusLead === 'salvando'}
-                      aria-busy={statusLead === 'salvando' || undefined}
+                      disabled={lead.status === 'salvando'}
+                      aria-busy={lead.status === 'salvando' || undefined}
                       className="bg-primary text-surface font-display font-bold text-sm px-5 py-2 rounded-lg hover:bg-depth transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {statusLead === 'salvando' ? 'Salvando…' : 'Salvar como lead'}
+                      {lead.status === 'salvando' ? 'Salvando…' : 'Salvar como lead'}
                     </button>
                   ) : (
                     <div className="flex items-center gap-3 flex-wrap">
@@ -1016,67 +1019,67 @@ function App() {
                         </label>
                         <select
                           id="lead-status"
-                          value={leadData?.status ?? 'novo'}
-                          disabled={statusAtualizacao === 'salvando'}
+                          value={lead.data?.status ?? 'novo'}
+                          disabled={atualizacao.status === 'salvando'}
                           onChange={(e) => handleAtualizarStatus(e.target.value)}
-                          aria-busy={statusAtualizacao === 'salvando' || undefined}
+                          aria-busy={atualizacao.status === 'salvando' || undefined}
                           className="text-sm font-body text-depth border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50 bg-white"
                         >
                           {Object.entries(LEAD_STATUS_LABELS).map(([val, label]) => (
                             <option key={val} value={val}>{label}</option>
                           ))}
                         </select>
-                        {statusAtualizacao === 'salvando' && (
+                        {atualizacao.status === 'salvando' && (
                           <span className="text-xs text-gray-400 font-body" aria-live="polite">Salvando…</span>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {statusLead === 'salvo' && (
+                  {lead.status === 'salvo' && (
                     <button
                       type="button"
                       onClick={handleGerarProposta}
-                      disabled={propostaCarregando}
-                      aria-busy={propostaCarregando || undefined}
+                      disabled={proposta.carregando}
+                      aria-busy={proposta.carregando || undefined}
                       className="text-primary font-display font-bold text-sm px-5 py-2 rounded-lg border border-primary/30 hover:border-primary hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
-                      {propostaCarregando
+                      {proposta.carregando
                         ? 'Gerando…'
-                        : (leadData?.scoreAtencao ?? 0) >= 40
+                        : (lead.data?.scoreAtencao ?? 0) >= 40
                         ? 'Gerar diagnóstico'
                         : 'Gerar proposta'}
                     </button>
                   )}
 
                   <a
-                    href={`/cnpj/${cnpjConsultado}/pdf`}
+                    href={`/cnpj/${consulta.cnpjConsultado}/pdf`}
                     download
-                    aria-label={`Baixar relatório PDF do CNPJ ${cnpjConsultado}`}
+                    aria-label={`Baixar relatório PDF do CNPJ ${consulta.cnpjConsultado}`}
                     className="text-gray-500 font-display font-bold text-sm px-5 py-2 rounded-lg border border-gray-200 hover:border-gray-300 hover:text-depth transition-colors"
                   >
                     Baixar PDF
                   </a>
 
-                  {statusLead === 'erro' && erroLead && (
+                  {lead.status === 'erro' && lead.erro && (
                     <p
                       role="alert"
                       aria-live="assertive"
                       className="text-danger text-sm flex items-center gap-1"
                     >
                       <span aria-hidden="true">⚠</span>
-                      {erroLead}
+                      {lead.erro}
                     </p>
                   )}
 
-                  {statusAtualizacao === 'erro' && erroStatus && (
+                  {atualizacao.status === 'erro' && atualizacao.erro && (
                     <p
                       role="alert"
                       aria-live="assertive"
                       className="text-danger text-sm flex items-center gap-1"
                     >
                       <span aria-hidden="true">⚠</span>
-                      {erroStatus}
+                      {atualizacao.erro}
                     </p>
                   )}
                 </div>
