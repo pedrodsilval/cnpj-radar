@@ -135,6 +135,7 @@ export class CertidoesService {
     const irregulares = await this.certidaoRepo.find({
       where: { status: CertidaoStatus.IRREGULAR },
       order: { atualizadoEm: 'DESC' },
+      take: 100,
     });
 
     const vencendo = await this.certidaoRepo
@@ -143,6 +144,7 @@ export class CertidoesService {
       .andWhere('c.validade IS NOT NULL')
       .andWhere('c.validade <= :limite', { limite: isoLimite })
       .orderBy('c.validade', 'ASC')
+      .take(100)
       .getMany();
 
     const seen = new Set<string>();

@@ -13,6 +13,7 @@ async function bootstrap() {
     origin: process.env.FRONTEND_URL ?? 'http://localhost:5173',
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
   });
 
   app.useStaticAssets(join(__dirname, '..', 'uploads'), { prefix: '/uploads' });

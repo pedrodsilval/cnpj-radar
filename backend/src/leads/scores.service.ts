@@ -8,6 +8,12 @@ export interface Scores {
   recomendacao: string;
 }
 
+// Escala 0–100 para os três scores. Pontos são aditivos com teto em 100 (Math.min).
+// scoreCadastral: completude dos dados (situação ativa + endereço + contato + QSA + capital).
+// scoreAtencao:   fatores de risco (inativa, empresa jovem, sem QSA, sem contato, capital baixo).
+// scoreComercial: potencial de prospecção (ativa, não-MEI, porte, CNAE, optante Simples, socios).
+//                 Retorna 0 quando eClienteAtivo=true (empresa já é cliente, não é lead).
+// recomendacao:   texto derivado dos três scores, sem lógica adicional de negócio.
 @Injectable()
 export class ScoresService {
   calcular(empresa: Empresa, sociosCount: number, eClienteAtivo = false): Scores {
