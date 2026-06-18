@@ -8,6 +8,7 @@ import { Lead } from '../leads/entities/lead.entity';
 import { CertidoesService } from './certidoes.service';
 import { CertidoesController } from './certidoes.controller';
 import { CertidoesScraperService } from './certidoes-scraper.service';
+import { CaptchaClientService } from './captcha-client.service';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { CertidoesScraperService } from './certidoes-scraper.service';
     CredenciaisModule,
   ],
   controllers: [CertidoesController],
-  providers: [CertidoesService, CertidoesScraperService],
+  providers: [CertidoesService, CertidoesScraperService, CaptchaClientService],
   exports: [CertidoesService],
 })
 export class CertidoesModule {}

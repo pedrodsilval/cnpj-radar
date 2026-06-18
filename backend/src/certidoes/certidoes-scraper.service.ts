@@ -4,6 +4,7 @@ import { join } from 'path';
 import { chromium, Browser, Page } from 'playwright';
 import { CredenciaisService } from '../credenciais/credenciais.service';
 import { CredencialTipo } from '../credenciais/credencial.entity';
+import { CaptchaClientService } from './captcha-client.service';
 
 // pdf-parse é CJS sem export default compatível com nodenext — require com tipagem explícita
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -20,7 +21,10 @@ export interface ResultadoScraper {
 export class CertidoesScraperService {
   private readonly logger = new Logger(CertidoesScraperService.name);
 
-  constructor(private readonly credenciais: CredenciaisService) {}
+  constructor(
+    private readonly credenciais: CredenciaisService,
+    private readonly captchaClient: CaptchaClientService,
+  ) {}
 
   private async comBrowser<T>(fn: (browser: Browser) => Promise<T>): Promise<T> {
     const browser = await chromium.launch({
@@ -353,8 +357,15 @@ export class CertidoesScraperService {
     });
   }
 
-  // Submete imagem CAPTCHA ao 2captcha e retorna o texto resolvido
+  // Resolve CAPTCHA de imagem: tenta api_captcha local primeiro, cai no 2captcha se falhar
   private async resolver2captchaImagem(imageSrc: string, apiKey: string): Promise<string | null> {
+    const localToken = await this.captchaClient.resolverImagem(imageSrc);
+    if (localToken) {
+      this.logger.log('CNDT: CAPTCHA resolvido localmente (api_captcha).');
+      return localToken;
+    }
+
+    this.logger.log('CNDT: api_captcha não resolveu — acionando 2captcha (pago).');
     const base64 = imageSrc.replace(/^data:image\/\w+;base64,/, '');
 
     try {
@@ -1074,12 +1085,19 @@ export class CertidoesScraperService {
     };
   }
 
-  // Resolve hCaptcha via 2captcha (method=hcaptcha)
+  // Resolve hCaptcha: tenta api_captcha local primeiro, cai no 2captcha se falhar
   private async resolver2captchaHcaptcha(
     apiKey: string,
     sitekey: string,
     pageUrl: string,
   ): Promise<string | null> {
+    const localToken = await this.captchaClient.resolverHcaptcha(sitekey, pageUrl);
+    if (localToken) {
+      this.logger.log('CND Federal: hCaptcha resolvido localmente (api_captcha).');
+      return localToken;
+    }
+
+    this.logger.log('CND Federal: api_captcha não resolveu — acionando 2captcha (pago).');
     try {
       const submitRes = await fetch('https://2captcha.com/in.php', {
         method: 'POST',
