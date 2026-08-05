@@ -127,7 +127,7 @@ export class CertidoesService {
     });
   }
 
-  async alertas(diasAntecedencia = 30): Promise<Certidao[]> {
+  async alertas(diasAntecedencia = 30): Promise<(Certidao & { diasParaVencer: number | null })[]> {
     const dataLimite = new Date();
     dataLimite.setDate(dataLimite.getDate() + diasAntecedencia);
     const isoLimite = dataLimite.toISOString().slice(0, 10);
@@ -148,11 +148,13 @@ export class CertidoesService {
       .getMany();
 
     const seen = new Set<string>();
-    return [...irregulares, ...vencendo].filter((c) => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
+    return [...irregulares, ...vencendo]
+      .filter((c) => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      })
+      .map((c) => ({ ...c, diasParaVencer: diasParaVencer(c.validade) }));
   }
 
   async consultarAutomatico(cnpj: string): Promise<Record<string, unknown>> {
