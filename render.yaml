@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: cnpj-radar
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: cd frontend && npm ci && npm run build && cd ../backend && npm ci && npm run build
+    startCommand: cd backend && npm run start:prod
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: N8N_WEBHOOK_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
