@@ -394,8 +394,7 @@ export class CertidoesScraperService {
     try {
       const submitRes = await fetch('https://2captcha.com/in.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: apiKey, method: 'base64', body: base64, json: 1 }),
+        body: new URLSearchParams({ key: apiKey, method: 'base64', body: base64, json: '1' }),
       });
       const submitJson = (await submitRes.json()) as { status: number; request: string };
       if (submitJson.status !== 1) {
@@ -1124,13 +1123,12 @@ export class CertidoesScraperService {
     try {
       const submitRes = await fetch('https://2captcha.com/in.php', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: new URLSearchParams({
           key: apiKey,
           method: 'hcaptcha',
           sitekey,
           pageurl: pageUrl,
-          json: 1,
+          json: '1',
         }),
       });
       const submitJson = (await submitRes.json()) as { status: number; request: string };
