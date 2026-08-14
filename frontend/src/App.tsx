@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { CertidoesTab } from './CertidoesTab'
 import { CredenciaisTab } from './CredenciaisTab'
 import { AlertasTab, useContagemAlertas } from './AlertasTab'
@@ -529,6 +529,7 @@ function ModalAlterarSenha({ usuario, onFechar }: { usuario: UsuarioLogado; onFe
 
 function App() {
   const [logado, setLogado]           = useState(estaLogado)
+  const [sessaoExpirada, setSessaoExpirada] = useState(false)
   const [modalSenha, setModalSenha]   = useState(false)
   const [vista, setVista]             = useState<Vista>('cnpj')
   const [cnpj, setCnpj]               = useState('')
@@ -542,8 +543,22 @@ function App() {
 
   const usuario = getUsuario()
 
+  useEffect(() => {
+    const onSessaoExpirada = () => {
+      setSessaoExpirada(true)
+      setLogado(false)
+    }
+    window.addEventListener('cnpj-radar-sessao-expirada', onSessaoExpirada)
+    return () => window.removeEventListener('cnpj-radar-sessao-expirada', onSessaoExpirada)
+  }, [])
+
   if (!logado) {
-    return <LoginPage onLogado={() => setLogado(true)} />
+    return (
+      <LoginPage
+        onLogado={() => { setSessaoExpirada(false); setLogado(true) }}
+        mensagemInicial={sessaoExpirada ? 'Sua sessão expirou. Faça login novamente.' : null}
+      />
+    )
   }
 
   async function handleSubmit(e: React.FormEvent) {

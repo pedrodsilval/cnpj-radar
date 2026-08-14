@@ -3,12 +3,13 @@ import { salvarSessao, type UsuarioLogado } from './auth'
 
 interface Props {
   onLogado: () => void
+  mensagemInicial?: string | null
 }
 
-export function LoginPage({ onLogado }: Props) {
+export function LoginPage({ onLogado, mensagemInicial }: Props) {
   const [email, setEmail]         = useState('')
   const [senha, setSenha]         = useState('')
-  const [erro, setErro]           = useState<string | null>(null)
+  const [erro, setErro]           = useState<string | null>(mensagemInicial ?? null)
   const [carregando, setCarregando] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {

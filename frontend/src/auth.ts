@@ -40,10 +40,17 @@ export function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// Drop-in replacement for fetch() that always sends the Bearer token
-export function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+// Drop-in replacement for fetch() that always sends the Bearer token.
+// On a 401, the session is stale/expired — clear it and notify the app
+// so it can drop back to the login screen instead of showing a dead-end error.
+export async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  return fetch(url, { ...init, headers })
+  const res = await fetch(url, { ...init, headers })
+  if (res.status === 401 && token) {
+    limparSessao()
+    window.dispatchEvent(new Event('cnpj-radar-sessao-expirada'))
+  }
+  return res
 }
