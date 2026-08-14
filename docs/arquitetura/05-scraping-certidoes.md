@@ -15,10 +15,10 @@ O módulo de certidões nasce como **gestor**, não como emissor automático. O 
 | **CND Federal (Receita + PGFN)** | ✅ Código funcional / ⛔ bloqueado por saldo | Playwright + hCaptcha resolvido via 2captcha (fallback: api_captcha local primeiro) | Portal `servicos.receitafederal.gov.br`. Fluxo: resolve captcha → `validar-contribuinte` → `Emissao` (PDF em base64). Só falta saldo na conta 2captcha do cliente (ação dele, não técnica). |
 | **CNDT Trabalhista (TST)** | ✅ Implementado | Playwright, resposta de captcha normalizada para minúsculas antes de submeter | `cndt-certidao.tst.jus.br`. Depende do mesmo fluxo de captcha do CND Federal. |
 | **Dívida Ativa da União** | ✅ Implementado | Reusa `consultarCndFederal` | Mesmo scraper da CND Federal — mesma dependência de saldo 2captcha. |
-| **Certidão Estadual** | ✅ Implementado (por UF cadastrada) | Playwright | Testado funcionando para BA. |
-| **Certidão Municipal** | ✅ Implementado (por UF/município cadastrado) | Playwright | Depende do portal do município. |
-| **Inscrição Estadual (IE)** | ✅ Implementado | Playwright | — |
-| **Inscrição Municipal (IM)** | ✅ Implementado | Playwright | — |
+| **Certidão Estadual** | ⚠️ Só Bahia | Playwright, SEFAZ-BA | Testado funcionando para BA. Outros 26 estados: link manual (stub). |
+| **Certidão Municipal** | ⚠️ Só Salvador (desde 14/08/2026) | HTTP direto (checagem) + Playwright (emissão do PDF) | Regularidade Fiscal PJ da SEFAZ+PGMS Salvador, sem login. Caminho de erro validado contra o portal real; caminho de sucesso (CNPJ regular) não testado com caso real. Outros municípios: link manual (stub). |
+| **Inscrição Estadual (IE)** | ⚠️ Só Bahia | Playwright, SEFAZ-BA | Mesma limitação da Certidão Estadual. |
+| **Inscrição Municipal (IM)** | ❌ Nenhuma | — | A ferramenta pública de Salvador pra isso pede o número da inscrição como entrada, não o CNPJ — não dá pra automatizar sem já ter esse dado. |
 
 **Opção paga salva para reavaliação futura:**
 - **Infosimples** — cobre CND Federal, FGTS/CRF, CNDT TST e SEFAZ estadual em todas as UFs. Cobrança por consulta com desconto por volume. Preços exigem cadastro em `infosimples.com/consultas/precos/`. Avaliar quando o volume de CNPJs monitorados justificar o custo mensal.
@@ -61,7 +61,9 @@ Todos os 8 tipos têm scraper implementado em `backend/src/certidoes/certidoes-s
 - **FGTS / CRF (Caixa)**: `consultarFgts()`. JSF sem CAPTCHA. Testado ponta a ponta funcionando (localmente, rede brasileira). Em produção, bloqueado por WAF (403 Azion) no IP do Render — resolve com IP brasileiro (VPS planejada).
 - **CND Federal / Dívida Ativa da União**: `consultarCndFederal()` / `consultarCndFederalCom2captcha()`. Portal `servicos.receitafederal.gov.br`, hCaptcha resolvido via `api_captcha` (local, tentado primeiro) com fallback pago no 2captcha. Bloqueado apenas por saldo zerado na conta 2captcha do cliente.
 - **CNDT Trabalhista (TST)**: `consultarCndt()`. JSF com CAPTCHA de imagem — resposta normalizada para minúsculas antes de submeter (bug já corrigido). Mesma dependência de 2captcha.
-- **Certidão Estadual / Municipal / Inscrição Estadual / Municipal**: `consultarCndEstadual()`, `consultarCertidaoMunicipal()`, `consultarInscricaoEstadual()`, `consultarInscricaoMunicipal()` — Playwright, seletores mapeados por UF/município conforme cadastro da empresa.
+- **Certidão Estadual / Inscrição Estadual**: `consultarCndEstadual()`, `consultarInscricaoEstadual()` — Playwright, só cobrem Bahia (SEFAZ-BA); outros estados caem em link manual.
+- **Certidão Municipal**: `consultarCertidaoMunicipal()` — **Salvador automatizado desde 14/08/2026** via `consultarCertidaoMunicipalSalvador()`: Certidão de Regularidade Fiscal PJ (SEFAZ+PGMS), portal público sem login (`servicosweb.sefaz.salvador.ba.gov.br/sistema/certidao_negativa`). O "código de verificação" da tela é decorativo — o valor certo vem exposto num campo hidden e a validação é só client-side, o endpoint real nem recebe esse parâmetro. Checagem de status via HTTP direto; emissão do PDF (quando regular) via Playwright. Caminho de erro validado contra resposta real do portal; caminho de sucesso não testado com CNPJ regular real (nenhum disponível na implementação). Outros municípios continuam manuais.
+- **Inscrição Municipal**: `consultarInscricaoMunicipal()` — sem automação. A ferramenta pública de Salvador pra isso pede o número da inscrição como entrada (não o CNPJ), então não dá pra automatizar sem já ter esse dado.
 
 **Diagnóstico embutido no FGTS:** se o campo de inscrição não aparecer em 60s, o scraper captura `title` + trecho do `body` da página retornada e devolve isso na própria `mensagem` do resultado — evita precisar de acesso aos logs do Render pra saber o que travou (foi assim que o bloqueio Azion foi confirmado).
 

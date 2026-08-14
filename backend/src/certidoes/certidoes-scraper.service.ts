@@ -904,19 +904,19 @@ export class CertidoesScraperService {
 
   // ---------------------------------------------------------------------------
   // Certidão Municipal — por município
-  // Salvador: NFSe exige login — retorna INDISPONIVEL com link direto
+  // Salvador: automatizado (ver consultarCertidaoMunicipalSalvador) — a
+  // Certidão de Regularidade Fiscal PJ da SEFAZ/PGMS não exige login nem
+  // certificado, ao contrário do que se pensava (o NFSe exige login, mas é
+  // um sistema diferente do de certidão de regularidade fiscal).
   // Outros municípios: INDISPONIVEL com instrução para prefeitura
   // ---------------------------------------------------------------------------
   async consultarCertidaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null): Promise<ResultadoScraper> {
+    const cnpjLimpo = cnpj.replace(/\D/g, '');
     const munUpper = (municipio ?? '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const ufUpper  = (uf ?? '').toUpperCase().trim();
 
     if (munUpper.includes('SALVADOR') || (ufUpper === 'BA' && !municipio)) {
-      return {
-        status: 'INDISPONIVEL',
-        validade: null,
-        mensagem: 'Certidão Municipal de Salvador exige login no portal NFSe da Prefeitura. Acesse: https://nfse.salvador.ba.gov.br — faça login e emita a Certidão Negativa de Débitos Tributários Municipais.',
-      };
+      return this.consultarCertidaoMunicipalSalvador(cnpjLimpo);
     }
 
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
@@ -944,6 +944,117 @@ export class CertidoesScraperService {
         ? `Certidão Municipal de ${nomeMun}: acesse o portal da prefeitura: ${portal}`
         : `Certidão Municipal de ${nomeMun}: consulte diretamente no portal da prefeitura municipal ou Secretaria de Finanças.`,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Salvador (Regularidade Fiscal PJ, SEFAZ + PGMS)
+  // Portal: https://servicosweb.sefaz.salvador.ba.gov.br/sistema/certidao_negativa/
+  // Sem login. O "código de verificação" exibido na tela é decorativo: o valor
+  // certo já vem exposto num campo hidden (id textfield22) e a validação é
+  // inteiramente client-side em JS — o endpoint real (ProxyValidaCNPJCertidao.asp)
+  // nem recebe esse valor como parâmetro. A checagem de status é feita via HTTP
+  // direto (mesmo endpoint que o JS da página chama); só a emissão do PDF final
+  // (quando regular) usa Playwright, replicando o clique real do usuário.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalSalvador(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const BASE = 'https://servicosweb.sefaz.salvador.ba.gov.br/sistema/certidao_negativa';
+
+    try {
+      const proxyRes = await fetch(
+        `${BASE}/ProxyValidaCNPJCertidao.asp?CdInscricao=${cnpjLimpo}&Tpcadastro=3`,
+        { method: 'POST' },
+      );
+      // A página é servida em ISO-8859-1 (Latin-1) — decodificar como UTF-8 corrompe acentos.
+      const buf = await proxyRes.arrayBuffer();
+      const texto = new TextDecoder('iso-8859-1').decode(buf).trim().replace(/\|$/, '');
+      const colunas = texto.split(';');
+      const codigo = colunas[0];
+
+      if (codigo === 'VAZIO') {
+        return { status: 'INDISPONIVEL', validade: null, mensagem: 'Certidão Municipal Salvador: CNPJ não encontrado na base da SEFAZ.' };
+      }
+      if (codigo === '1') {
+        const naoInscrito = colunas[7] === 'N';
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: naoInscrito
+            ? `Certidão Municipal Salvador: CNPJ ${cnpjLimpo} não está inscrito no Cadastro Mobiliário da SEFAZ Salvador. Empresas sem estabelecimento em Salvador costumam não ter inscrição — confirme se é o caso antes de tratar como pendência.`
+            : `Certidão Municipal Salvador: informações insuficientes para emissão automática pela internet. Consulte no Posto Central da SEFAZ ou pelo FAS (https://fas.sefaz.salvador.ba.gov.br/).`,
+        };
+      }
+      if (codigo === '2' || codigo === '3') {
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: colunas[1]?.trim() || 'Certidão Municipal Salvador: informações insuficientes para emissão pela internet.',
+        };
+      }
+      if (codigo !== '0') {
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Salvador: resposta inesperada do portal (código "${codigo}").` };
+      }
+
+      // Código "0" = regular perante SEFAZ/PGMS. Falta só emitir o documento —
+      // isso é uma segunda etapa (POST de formulário que abre o PDF em nova aba).
+      return this.emitirCertidaoMunicipalSalvador(cnpjLimpo);
+    } catch (err) {
+      this.logger.error(`Certidão Municipal Salvador erro para ${cnpjLimpo}: ${err}`);
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Salvador: ${err}` };
+    }
+  }
+
+  private async emitirCertidaoMunicipalSalvador(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://servicosweb.sefaz.salvador.ba.gov.br/sistema/certidao_negativa/servicos_certidao_negativa_CNPJ.asp';
+
+    return this.comBrowser(async (browser) => {
+      const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+        locale: 'pt-BR',
+        acceptDownloads: true,
+      });
+      const page = await context.newPage();
+
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.locator('#txtCNPJ').fill(cnpjLimpo);
+
+        // Campo de "código de verificação" — decorativo, o valor certo já está no hidden.
+        const codigoReal = await page.locator('#textfield22').inputValue();
+        await page.locator('#txtCGA').fill(codigoReal);
+
+        const [novaPage] = await Promise.all([
+          context.waitForEvent('page', { timeout: 20_000 }),
+          page.locator('input[name="Submit"]').click(),
+        ]);
+
+        await novaPage.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+        const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
+        if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+        const filename = `municipal-salvador-${cnpjLimpo}-${Date.now()}.pdf`;
+        const filepath = join(uploadDir, filename);
+        await novaPage.pdf({ path: filepath, format: 'A4', printBackground: true });
+
+        const texto = (await novaPage.textContent('body') ?? '').replace(/\s+/g, ' ');
+        const validade = this.extrairData(texto);
+
+        return {
+          status: 'REGULAR',
+          validade,
+          mensagem: 'Certidão de Regularidade Fiscal de Pessoa Jurídica (SEFAZ/PGMS Salvador) emitida com sucesso.',
+          urlArquivo: `/uploads/certidoes/${filename}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Salvador: falha ao emitir PDF final: ${err}`);
+        return {
+          status: 'REGULAR',
+          validade: null,
+          mensagem: `Certidão Municipal Salvador: contribuinte regular perante SEFAZ/PGMS, mas não foi possível gerar o PDF automaticamente. Emita manualmente em ${FORM_URL}.`,
+        };
+      } finally {
+        await context.close();
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------

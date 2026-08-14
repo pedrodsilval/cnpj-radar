@@ -42,7 +42,7 @@ export const CERTIDAO_AUTOMATIZAVEL: Record<CertidaoTipo, boolean> = {
   [CertidaoTipo.CNDT_TRABALHISTA]:      true,
   [CertidaoTipo.DIVIDA_ATIVA]:          true,
   [CertidaoTipo.ESTADUAL]:              true,
-  [CertidaoTipo.MUNICIPAL]:             false,
+  [CertidaoTipo.MUNICIPAL]:             true,
   [CertidaoTipo.INSCRICAO_ESTADUAL]:    false,
   [CertidaoTipo.INSCRICAO_MUNICIPAL]:   false,
 };
