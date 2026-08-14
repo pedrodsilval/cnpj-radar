@@ -65,6 +65,7 @@ function ModalNovoUsuario({ onSalvo, onFechar }: ModalNovoProps) {
                 type={i === 1 ? 'email' : 'text'}
                 value={i === 0 ? nome : email}
                 onChange={e => i === 0 ? setNome(e.target.value) : setEmail(e.target.value)}
+                autoComplete="off"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"
               />
             </div>
@@ -75,6 +76,7 @@ function ModalNovoUsuario({ onSalvo, onFechar }: ModalNovoProps) {
               type="password"
               value={senha}
               onChange={e => setSenha(e.target.value)}
+              autoComplete="new-password"
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"
             />
           </div>

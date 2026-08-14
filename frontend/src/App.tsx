@@ -746,13 +746,14 @@ function App() {
         {/* Header */}
         <header className="bg-depth h-14 flex-shrink-0 flex items-center px-8 border-b border-surface/10">
           <h1 className="font-display font-bold text-surface text-sm tracking-wide">
-            {vista === 'config'    ? 'Configurações'        :
-             vista === 'alertas'   ? 'Alertas de Certidões' :
-             vista === 'painel'    ? 'Painel de Mercado'    :
-             vista === 'usuarios'  ? 'Usuários'             :
-             vista === 'dashboard' ? 'Dashboard'            :
-             vista === 'tarefas'   ? 'Tarefas'              :
-                                     'Consulta de CNPJ'}
+            {vista === 'config'      ? 'Configurações'        :
+             vista === 'alertas'     ? 'Alertas de Certidões' :
+             vista === 'painel'      ? 'Painel de Mercado'    :
+             vista === 'usuarios'    ? 'Usuários'             :
+             vista === 'dashboard'   ? 'Dashboard'            :
+             vista === 'tarefas'     ? 'Tarefas'              :
+             vista === 'relatorios'  ? 'Relatórios'           :
+                                       'Consulta de CNPJ'}
           </h1>
         </header>
 

@@ -370,6 +370,7 @@ export function CredenciaisTab() {
                     value={campos.pfxSenha ?? ''}
                     onChange={(e) => setCampos((p) => ({ ...p, pfxSenha: e.target.value }))}
                     placeholder="••••••••"
+                    autoComplete="off"
                     className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
                   />
                 </div>
@@ -399,6 +400,7 @@ export function CredenciaisTab() {
                     value={campos.senha ?? ''}
                     onChange={(e) => setCampos((p) => ({ ...p, senha: e.target.value }))}
                     placeholder="••••••••"
+                    autoComplete="off"
                     className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
                   />
                 </div>
@@ -503,6 +505,7 @@ function CampoChaveApi({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
+          autoComplete="off"
           className="w-full border border-gray-200 rounded-xl px-4 py-2.5 pr-10 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
         />
         <button
