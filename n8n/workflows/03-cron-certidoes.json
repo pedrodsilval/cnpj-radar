@@ -18,7 +18,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/auth/login",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
         "options": {}
       },
@@ -33,7 +33,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"workflowId\": \"cron-certidoes\"}",
         "sendHeaders": true,
         "headerParameters": {
@@ -85,7 +85,7 @@
         "method": "PATCH",
         "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { total: $('Consultar Certidões Lote').first().json.total, consultados: $('Consultar Certidões Lote').first().json.consultados, erros: $('Consultar Certidões Lote').first().json.erros.length, alertas: $('Buscar Alertas').first().json.length } }) }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -104,7 +104,7 @@
         "method": "PATCH",
         "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'erro', resultado: { erro: $json.error?.message || 'Timeout ou falha ao consultar certidões em lote' } }) }}",
         "sendHeaders": true,
         "headerParameters": {

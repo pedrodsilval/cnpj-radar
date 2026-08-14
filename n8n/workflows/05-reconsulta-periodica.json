@@ -18,7 +18,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/auth/login",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
         "options": {}
       },
@@ -30,6 +30,26 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:3000/workflow-runs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"workflowId\": \"05-reconsulta-periodica\"}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
+        },
+        "options": {}
+      },
+      "id": "registrar-inicio",
+      "name": "Registrar Início",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
         "url": "http://host.docker.internal:3000/leads",
         "sendHeaders": true,
         "headerParameters": {
@@ -41,18 +61,18 @@
       "name": "Buscar Leads Ativos",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 300]
+      "position": [900, 300]
     },
     {
       "parameters": {
-        "fieldToSplitOut": "=",
+        "batchSize": 1,
         "options": {}
       },
       "id": "split-leads",
       "name": "Iterar Leads",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [900, 300]
+      "position": [1120, 300]
     },
     {
       "parameters": {
@@ -77,13 +97,14 @@
         "options": {}
       },
       "id": "filtro-ativos",
-      "name": "Apenas Ativos",
-      "type": "n8n-nodes-base.filter",
+      "name": "Apenas Ativos?",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1120, 300]
+      "position": [1340, 180]
     },
     {
       "parameters": {
+        "method": "GET",
         "url": "=http://host.docker.internal:3000/cnpj/{{ $json.cnpj }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -95,7 +116,7 @@
       "name": "Reconsultar CNPJ",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1340, 300]
+      "position": [1560, 120]
     },
     {
       "parameters": {
@@ -115,23 +136,17 @@
       },
       "id": "detectar-mudanca",
       "name": "Situação Mudou?",
-      "type": "n8n-nodes-base.filter",
+      "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1560, 300]
+      "position": [1780, 120]
     },
     {
       "parameters": {
+        "method": "POST",
         "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "workflowId", "value": "05-reconsulta-periodica" },
-            {
-              "name": "payload",
-              "value": "={{ { cnpj: $json.dados?.cnpj, situacaoCadastral: $json.dados?.situacaoCadastral, alerta: 'Situação cadastral diferente de ATIVA detectada na reconsulta periódica' } }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflowId: '05-reconsulta-periodica', payload: { cnpj: $json.dados?.cnpj, situacaoCadastral: $json.dados?.situacaoCadastral, alerta: 'Situação cadastral diferente de ATIVA detectada na reconsulta periódica' } }) }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
@@ -142,21 +157,15 @@
       "name": "Registrar Alerta",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1780, 300]
+      "position": [2000, 60]
     },
     {
       "parameters": {
-        "url": "http://host.docker.internal:3000/workflow-runs",
+        "method": "PATCH",
+        "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            { "name": "workflowId", "value": "05-reconsulta-periodica" },
-            {
-              "name": "payload",
-              "value": "={{ { totalLeads: $('Iterar Leads').context.noItemsLeft ? 'concluído' : 'parcial', executadoEm: new Date().toISOString() } }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { executadoEm: new Date().toISOString() } }) }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [{ "name": "x-n8n-secret", "value": "={{ $env.N8N_WEBHOOK_SECRET }}" }]
@@ -167,33 +176,45 @@
       "name": "Registrar Conclusão",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1780, 480]
+      "position": [1340, 480]
     }
   ],
   "connections": {
     "Toda Segunda às 06h": {
-      "main": [[{ "node": "Login", "type": "main", "index": 0 }]]
+      "main": [[{"node": "Login", "type": "main", "index": 0}]]
     },
     "Login": {
-      "main": [[{ "node": "Buscar Leads Ativos", "type": "main", "index": 0 }]]
+      "main": [[{"node": "Registrar Início", "type": "main", "index": 0}]]
+    },
+    "Registrar Início": {
+      "main": [[{"node": "Buscar Leads Ativos", "type": "main", "index": 0}]]
     },
     "Buscar Leads Ativos": {
-      "main": [[{ "node": "Iterar Leads", "type": "main", "index": 0 }]]
+      "main": [[{"node": "Iterar Leads", "type": "main", "index": 0}]]
     },
     "Iterar Leads": {
-      "main": [[{ "node": "Apenas Ativos", "type": "main", "index": 0 }]]
+      "main": [
+        [{"node": "Apenas Ativos?", "type": "main", "index": 0}],
+        [{"node": "Registrar Conclusão", "type": "main", "index": 0}]
+      ]
     },
-    "Apenas Ativos": {
-      "main": [[{ "node": "Reconsultar CNPJ", "type": "main", "index": 0 }]]
+    "Apenas Ativos?": {
+      "main": [
+        [{"node": "Reconsultar CNPJ", "type": "main", "index": 0}],
+        [{"node": "Iterar Leads", "type": "main", "index": 0}]
+      ]
     },
     "Reconsultar CNPJ": {
-      "main": [[{ "node": "Situação Mudou?", "type": "main", "index": 0 }]]
+      "main": [[{"node": "Situação Mudou?", "type": "main", "index": 0}]]
     },
     "Situação Mudou?": {
       "main": [
-        [{ "node": "Registrar Alerta", "type": "main", "index": 0 }],
-        [{ "node": "Registrar Conclusão", "type": "main", "index": 0 }]
+        [{"node": "Registrar Alerta", "type": "main", "index": 0}],
+        [{"node": "Iterar Leads", "type": "main", "index": 0}]
       ]
+    },
+    "Registrar Alerta": {
+      "main": [[{"node": "Iterar Leads", "type": "main", "index": 0}]]
     }
   },
   "active": false,
@@ -204,5 +225,5 @@
     "templateId": "05-reconsulta-periodica"
   },
   "pinData": {},
-  "versionId": "2"
+  "versionId": "3"
 }

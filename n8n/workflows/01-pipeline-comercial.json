@@ -15,7 +15,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/auth/login",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
         "options": {}
       },
@@ -30,7 +30,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"workflowId\": \"pipeline-comercial\"}",
         "sendHeaders": true,
         "headerParameters": {
@@ -97,7 +97,7 @@
         "method": "PATCH",
         "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"status\": \"concluido\"}",
         "sendHeaders": true,
         "headerParameters": {

@@ -19,7 +19,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/auth/login",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"email\": \"n8n@everest.com.br\", \"senha\": \"{{ $env.N8N_API_PASSWORD }}\"}",
         "options": {}
       },
@@ -34,7 +34,7 @@
         "method": "POST",
         "url": "http://host.docker.internal:3000/workflow-runs",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={\"workflowId\": \"cron-painel-cnae\"}",
         "sendHeaders": true,
         "headerParameters": {
@@ -86,7 +86,7 @@
         "method": "PATCH",
         "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'concluido', resultado: { totalEmpresas: $('Buscar Indicadores').first().json.totalEmpresas, totalLeads: $('Buscar Indicadores').first().json.totalLeads, cnaesUnicos: $('Buscar Indicadores').first().json.cnaesUnicos } }) }}",
         "sendHeaders": true,
         "headerParameters": {
@@ -105,7 +105,7 @@
         "method": "PATCH",
         "url": "=http://host.docker.internal:3000/workflow-runs/{{ $('Registrar Início').first().json.id }}/concluir",
         "sendBody": true,
-        "contentType": "json",
+        "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ status: 'erro', resultado: { erro: $json.error?.message || 'Falha ao consolidar painel CNAE' } }) }}",
         "sendHeaders": true,
         "headerParameters": {
