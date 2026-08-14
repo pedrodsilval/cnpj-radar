@@ -64,7 +64,10 @@ export class PainelService {
   ) {}
 
   async indicadores(uf?: string): Promise<Indicadores> {
-    const ufFilter = uf ? `AND e.uf = '${uf.toUpperCase()}'` : '';
+    // uf vem direto de query string — nunca interpolar no SQL. Parametrizado com $1.
+    const ufParam = uf ? uf.toUpperCase() : null;
+    const ufFilter = ufParam ? `AND e.uf = $1` : '';
+    const params = ufParam ? [ufParam] : [];
 
     const [[totais], topUfsRaw] = await Promise.all([
       this.dataSource.query<{ total_empresas: string; total_mei: string; abertas_12m: string }[]>(`
@@ -74,7 +77,7 @@ export class PainelService {
           COUNT(*) FILTER (WHERE e.data_inicio_atividade >= to_char(NOW() - INTERVAL '12 months', 'YYYY-MM-DD'))::int AS abertas_12m
         FROM empresas e
         WHERE 1=1 ${ufFilter}
-      `),
+      `, params),
       this.dataSource.query<{ uf: string; total: string }[]>(`
         SELECT e.uf, COUNT(*)::int AS total
         FROM empresas e
@@ -82,20 +85,20 @@ export class PainelService {
         GROUP BY e.uf
         ORDER BY total DESC
         LIMIT 10
-      `),
+      `, params),
     ]);
 
     const [{ total_leads }] = await this.dataSource.query<{ total_leads: string }[]>(`
       SELECT COUNT(*)::int AS total_leads FROM leads l
       JOIN empresas e ON e.cnpj = l.cnpj
       WHERE 1=1 ${ufFilter}
-    `);
+    `, params);
 
     const [{ cnae_unicos }] = await this.dataSource.query<{ cnae_unicos: string }[]>(`
       SELECT COUNT(DISTINCT e.cnae_principal_codigo)::int AS cnae_unicos
       FROM empresas e
       WHERE e.cnae_principal_codigo IS NOT NULL ${ufFilter}
-    `);
+    `, params);
 
     const totalEmpresas = Number(totais.total_empresas);
     const totalMei      = Number(totais.total_mei);
@@ -111,7 +114,10 @@ export class PainelService {
   }
 
   async listarCnaes(uf?: string): Promise<CnaeItem[]> {
-    const ufFilter = uf ? `AND e.uf = '${uf.toUpperCase()}'` : '';
+    // uf vem direto de query string — nunca interpolar no SQL. Parametrizado com $1.
+    const ufParam = uf ? uf.toUpperCase() : null;
+    const ufFilter = ufParam ? `AND e.uf = $1` : '';
+    const params = ufParam ? [ufParam] : [];
 
     const rows = await this.dataSource.query<{
       codigo: string;
@@ -131,7 +137,7 @@ export class PainelService {
       WHERE e.cnae_principal_codigo IS NOT NULL ${ufFilter}
       GROUP BY e.cnae_principal_codigo
       ORDER BY total_empresas DESC
-    `);
+    `, params);
 
     const configs = await this.cnaeConfigRepo.find();
     const configMap = new Map(configs.map((c) => [c.codigo, c]));
