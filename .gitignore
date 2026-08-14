@@ -29,6 +29,9 @@ backend/uploads/
 *.pdf
 backend-*.txt
 
+# Config local do Claude Code (permissões da sessão) — não compartilhar entre máquinas
+.claude/settings.local.json
+
 # Playwright
 frontend/test-results/
 frontend/playwright-report/

@@ -7,18 +7,18 @@ O módulo de certidões nasce como **gestor**, não como emissor automático. O 
 
 ## Mapa de automatização por certidão
 
-> Atualizado após pesquisa e teste de portais em 10/06/2026.
+> Atualizado em ago/2026 — status real após implementação e teste em produção (Render). Ver Decisão #5 em `CLAUDE.md` para o achado sobre bloqueio de IP.
 
-| Certidão | Status gratuito | Estratégia | Observação |
+| Certidão | Status | Estratégia implementada | Observação |
 |---|---|---|---|
-| **FGTS / CRF (Caixa)** | ✅ Implementável | Playwright — JSF sem CAPTCHA | Portal: `consulta-crf.caixa.gov.br` |
-| **CND Federal (Receita + PGFN)** | ⚠️ Investigar | Novo portal unificado lançado em 2026 | URL antiga morreu. Novo: `servicos.receitafederal.gov.br`. Testar manualmente. ConectaGov API (grátis, exige cert. digital ICP-Brasil + autorização Receita Federal) |
-| **CNDT Trabalhista (TST)** | ⚠️ Experimental | Playwright + Tesseract OCR | Portal tem CAPTCHA de imagem. OCR pode funcionar para CAPTCHA simples. Sem garantia. |
-| **Dívida Ativa da União** | ⚠️ Vinculada | Mesma solução da CND Federal | Cobertas pelo mesmo documento |
-| **Certidão Estadual** | ❌ Manual | — | Muito fragmentado por UF |
-| **Certidão Municipal** | ❌ Manual | — | Varia por cidade |
-| **Inscrição Estadual (IE)** | ❌ Manual | — | BrasilAPI retorna para alguns estados |
-| **Inscrição Municipal (IM)** | ❌ Manual | — | Portais municipais heterogêneos |
+| **FGTS / CRF (Caixa)** | ✅ Código funcional / ⛔ bloqueado em produção | Playwright — JSF sem CAPTCHA | Testado localmente (rede brasileira): funciona 100%, retorna REGULAR + PDF + validade. Em produção (Render), o WAF Azion do portal devolve 403 para o IP do datacenter — precisa de IP brasileiro (VPS) para destravar. Não é bug de código. |
+| **CND Federal (Receita + PGFN)** | ✅ Código funcional / ⛔ bloqueado por saldo | Playwright + hCaptcha resolvido via 2captcha (fallback: api_captcha local primeiro) | Portal `servicos.receitafederal.gov.br`. Fluxo: resolve captcha → `validar-contribuinte` → `Emissao` (PDF em base64). Só falta saldo na conta 2captcha do cliente (ação dele, não técnica). |
+| **CNDT Trabalhista (TST)** | ✅ Implementado | Playwright, resposta de captcha normalizada para minúsculas antes de submeter | `cndt-certidao.tst.jus.br`. Depende do mesmo fluxo de captcha do CND Federal. |
+| **Dívida Ativa da União** | ✅ Implementado | Reusa `consultarCndFederal` | Mesmo scraper da CND Federal — mesma dependência de saldo 2captcha. |
+| **Certidão Estadual** | ✅ Implementado (por UF cadastrada) | Playwright | Testado funcionando para BA. |
+| **Certidão Municipal** | ✅ Implementado (por UF/município cadastrado) | Playwright | Depende do portal do município. |
+| **Inscrição Estadual (IE)** | ✅ Implementado | Playwright | — |
+| **Inscrição Municipal (IM)** | ✅ Implementado | Playwright | — |
 
 **Opção paga salva para reavaliação futura:**
 - **Infosimples** — cobre CND Federal, FGTS/CRF, CNDT TST e SEFAZ estadual em todas as UFs. Cobrança por consulta com desconto por volume. Preços exigem cadastro em `infosimples.com/consultas/precos/`. Avaliar quando o volume de CNPJs monitorados justificar o custo mensal.
@@ -54,44 +54,18 @@ n8n (cron diário)
 
 ---
 
-## Implementação dos scrapers (ordem de prioridade)
+## Implementação dos scrapers — estado real (ago/2026)
 
-### Fase A — Playwright (prioridade imediata)
+Todos os 8 tipos têm scraper implementado em `backend/src/certidoes/certidoes-scraper.service.ts`, orquestrados por `CertidoesService.consultarAutomatico()`. O que falta não é código — é infraestrutura (ver Decisão #5 em `CLAUDE.md`):
 
-Instalar no backend:
-```bash
-npm install playwright
-npx playwright install chromium --with-deps
-```
+- **FGTS / CRF (Caixa)**: `consultarFgts()`. JSF sem CAPTCHA. Testado ponta a ponta funcionando (localmente, rede brasileira). Em produção, bloqueado por WAF (403 Azion) no IP do Render — resolve com IP brasileiro (VPS planejada).
+- **CND Federal / Dívida Ativa da União**: `consultarCndFederal()` / `consultarCndFederalCom2captcha()`. Portal `servicos.receitafederal.gov.br`, hCaptcha resolvido via `api_captcha` (local, tentado primeiro) com fallback pago no 2captcha. Bloqueado apenas por saldo zerado na conta 2captcha do cliente.
+- **CNDT Trabalhista (TST)**: `consultarCndt()`. JSF com CAPTCHA de imagem — resposta normalizada para minúsculas antes de submeter (bug já corrigido). Mesma dependência de 2captcha.
+- **Certidão Estadual / Municipal / Inscrição Estadual / Municipal**: `consultarCndEstadual()`, `consultarCertidaoMunicipal()`, `consultarInscricaoEstadual()`, `consultarInscricaoMunicipal()` — Playwright, seletores mapeados por UF/município conforme cadastro da empresa.
 
-**1. FGTS / CRF (Caixa) — PRIORIDADE 1**
-- Portal: `https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf`
-- JSF sem CAPTCHA identificado
-- Precisa: session cookie + ViewState + CNPJ + UF
-- Retorno: status regular/irregular na página HTML
+**Diagnóstico embutido no FGTS:** se o campo de inscrição não aparecer em 60s, o scraper captura `title` + trecho do `body` da página retornada e devolve isso na própria `mensagem` do resultado — evita precisar de acesso aos logs do Render pra saber o que travou (foi assim que o bloqueio Azion foi confirmado).
 
-**2. CNDT Trabalhista (TST) — PRIORIDADE 2 (experimental)**
-- Portal: `https://cndt-certidao.tst.jus.br/gerarCertidao.faces`
-- JSF **com** CAPTCHA de imagem simples
-- Estratégia: Playwright captura screenshot do CAPTCHA → Tesseract.js OCR → resolve → submete
-- Instalar: `npm install tesseract.js`
-- Sem garantia — depende da dificuldade do CAPTCHA
-
-**3. CND Federal — PENDENTE (investigação manual)**
-- Portal novo em `servicos.receitafederal.gov.br` lançado em 2026
-- Precisa de teste manual no browser para mapear formulário
-- Alternativa gratuita de longo prazo: ConectaGov API (gratuita, exige Cert. Digital ICP-Brasil + autorização Receita Federal)
-- Não implementar até URL e fluxo confirmados
-
-### Fase B — Após validação da Fase A
-- Certidão Estadual SEFAZ-BA e Municipal Salvador: Playwright, mapear seletores primeiro
-- Reavaliação da Infosimples se volume justificar
-
-### Critérios antes de produção (todos os scrapers)
-- [ ] Teste com CNPJ regular — resultado correto
-- [ ] Teste com CNPJ irregular — resultado correto
-- [ ] Tratamento de timeout e portal indisponível
-- [ ] Validade extraída e salva corretamente
+**2captcha:** requisições devem ser `application/x-www-form-urlencoded` (`URLSearchParams`), não JSON — a API legada do 2captcha (`/in.php`, `/res.php`) ignora corpo JSON silenciosamente e retorna erro de chave inválida mesmo com chave correta.
 
 ---
 
@@ -104,10 +78,9 @@ npx playwright install chromium --with-deps
 | CertidoesModule (CRUD) | ✅ Implementado |
 | Rota `GET /certidoes/checklist/:cnpj` | ✅ Implementada |
 | Rota `GET /certidoes/alertas` | ✅ Implementada |
-| Rota `POST /certidoes/consultar/:cnpj` | ✅ Placeholder — retorna mapa de status por tipo |
-| ScraperService — Fase A (HTTP) | 🔲 Pendente |
-| ScraperService — Fase B (Playwright) | 🔲 Pendente — após Fase A validada |
-| Workflow n8n cron diário | 🔲 Pendente — após scraper funcional |
+| Rota `POST /certidoes/consultar/:cnpj` | ✅ Implementada — roda os 8 scrapers e salva resultado |
+| ScraperService (todos os 8 tipos) | ✅ Implementado — ver ressalvas de infra acima |
+| Workflow n8n cron diário | ✅ Implementado (`n8n/workflows/05-reconsulta-periodica.json`) |
 
 ---
 
@@ -119,4 +92,4 @@ A validade da certidão está sempre no corpo do PDF retornado pelos portais. A 
 3. Regex para capturar a data: ex. `válida até (\d{2}/\d{2}/\d{4})`
 4. Converter para ISO 8601 (YYYY-MM-DD) antes de salvar
 
-Biblioteca: `npm install pdf-parse` (adicionar quando implementar scrapers).
+Biblioteca: `pdf-parse` (já instalada e em uso).

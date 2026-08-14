@@ -1,5 +1,5 @@
 # CLAUDE.md — cnpj-radar
-**Radar Empresarial Everest/FK's** | Versão 1.0 | Jun/2026
+**Radar Empresarial Everest/FK's** | Versão 1.1 | Ago/2026
 
 ---
 
@@ -30,7 +30,7 @@ Este é o documento-âncora do agente. Leia-o inteiro uma vez por sessão. Para 
 
 **O que é:** plataforma interna de inteligência comercial e cadastral para a Everest/FK's (contabilidade em Salvador/BA). Consulta CNPJs, valida e normaliza dados, cruza com a base de clientes, gera scores e recomendação de próxima ação, organiza regularidade fiscal/documental, alimenta um painel de mercado por CNAE e apoia onboarding.
 
-**O que é hoje (jun/2026):** plataforma operacional com todas as 5 fases implementadas. Backend NestJS com autenticação JWT + RBAC, banco Supabase (12 tabelas), scraping de certidões, geração de PDF, pipeline comercial com n8n, painel de mercado por CNAE, dashboard executivo, módulo de tarefas e relatórios por consultor. Testes Vitest (15 unit) + Playwright E2E (9 testes, fluxo crítico). Pronto para primeiro deploy em produção — ver migrations em `backend/migrations/`.
+**O que é hoje (ago/2026):** plataforma operacional com todas as 5 fases implementadas, **em produção desde ago/2026** em `https://cnpj-radar.onrender.com` (Render, plano free, região Oregon). Backend NestJS com autenticação JWT + RBAC, banco Supabase (12 tabelas, conta/projeto migrado em ago/2026 — ver Decisão #5), scraping de certidões (8 tipos automatizados, ver `docs/arquitetura/05-scraping-certidoes.md`), geração de PDF, pipeline comercial com n8n, painel de mercado por CNAE, dashboard executivo, módulo de tarefas e relatórios por consultor. Testes Vitest (15 unit) + Playwright E2E (9 testes, fluxo crítico).
 
 **O que deve virar:** produto comercial ofertado a outras contabilidades. Ver `docs/arquitetura/00-visao-geral.md`.
 
@@ -154,7 +154,7 @@ Estas regras nunca são violadas, independentemente do contexto da tarefa:
 6. **Nunca inventar dado cadastral ou fiscal.** Sempre citar a procedência (fonte + data da consulta). Em caso de dúvida, omitir e sinalizar. Ver seção "Fontes de dados e autoridade".
 7. **Backend é o dono da regra.** Nenhuma regra de negócio, permissão ou cálculo de score vive no frontend.
 8. **n8n entra só na Fase 2 e sobre API estável.** Fase 1 não tem n8n. O caminho crítico é: backend estável → n8n.
-9. **Certidões são quase sempre manuais.** Não assumir que portais públicos têm API limpa. O módulo nasce como gestor de regularidade (marcar, anexar, alertar, atribuir) — não como emissor automático.
+9. **Certidões são quase sempre manuais.** Não assumir que portais públicos têm API limpa. O módulo nasce como gestor de regularidade (marcar, anexar, alertar, atribuir) — não como emissor automático. Em ago/2026 os 8 tipos ganharam scraper, mas a automação real de alguns depende de infraestrutura (IP brasileiro, saldo de 2captcha) — ver Decisão #5. Automação implementada não é o mesmo que automação funcionando em produção.
 10. **Anotações internas são o dado mais sensível.** Mais que o CNPJ em si. Governança de dados (finalidade, retenção, auditoria) vale desde a Fase 1, não só quando login chegar na Fase 5.
 11. **Cadastro não é regularidade.** "Situação cadastral ativa" (dado de CNPJ) nunca é tratado nem exibido como prova de regularidade fiscal. São camadas distintas: cadastro vem da consulta de CNPJ; regularidade vem das certidões (Fase 3).
 12. **CNPJ tem dois formatos válidos.** Desde 06/07/2026 existe o CNPJ alfanumérico, além do numérico antigo. Todo código que valida, armazena ou exibe CNPJ aceita ambos. Ver seção "Fontes de dados e autoridade".
@@ -167,11 +167,11 @@ Estas regras nunca são violadas, independentemente do contexto da tarefa:
 | --- | --- | --- | --- |
 | 1 | MVP confiável | ✗ | ✅ Concluída |
 | 2 | Inteligência comercial | ✓ (entra aqui) | ✅ Concluída |
-| 3 | Regularidade assistida | ✓ | ✅ Concluída (CND Federal aguarda 2captcha) |
+| 3 | Regularidade assistida | ✓ | ✅ Concluída (CND Federal aguarda saldo no 2captcha; FGTS aguarda IP brasileiro — ver Decisão #5) |
 | 4 | Painel CNAE e mercado | ✓ | ✅ Concluída (taxa de penetração bloqueada pela base de clientes) |
 | 5 | Plataforma operacional | ✓ (orquestração plena) | ✅ Concluída — pendentes: 5.5 CRM (bloqueado) e 5.10 n8n orquestração plena |
 
-**Sistema pronto para produção.** Próximo passo: primeiro deploy. Ver migrations em `backend/migrations/`.
+**Sistema em produção** desde ago/2026 (Render). Ver Decisão #5 para o histórico de deploy e pendências operacionais.
 
 Fluxogramas detalhados e dependências entre entregas: `docs/roadmap/`.
 Tabela de sequenciamento completa (ordem, dependência, esforço P/M/G): `docs/sequenciamento.md`.
@@ -182,7 +182,8 @@ Tabela de sequenciamento completa (ordem, dependência, esforço P/M/G): `docs/s
 
 ### #1 — Login: ✅ Implementado na Fase 5
 JWT com `expiresIn: '8h'`, bcrypt (salt 12), `JwtAuthGuard` global, `RolesGuard` global, 5 perfis (administrador/comercial/financeiro/consultor/leitura). Brute-force protection: ThrottlerGuard no login (5 req/60s). Invalidação de token por `token_version` ao alterar senha. Logs de autenticação com IP. Seed: `cd backend && npm run seed:admin`.
-**JWT_SECRET**: alterar para valor forte antes do primeiro deploy em produção.
+**JWT_SECRET**: valor forte gerado e configurado direto no Render (env var, não versionado) — feito no deploy de ago/2026. O `.env` local mantém o placeholder de dev de propósito.
+**Sessão expirada:** um 401 da API dispara logout automático no frontend (evento `cnpj-radar-sessao-expirada`, ver `frontend/src/auth.ts`) — o usuário cai na tela de login com aviso, em vez de ver erro genérico de consulta.
 
 ### #2 — Base de clientes: em aberto [RESOLVER ANTES DA FASE 2]
 Descobrir antes de iniciar a Fase 2: (a) onde a base vive — planilha, sistema contábil ou CRM; (b) formato de exportação; (c) chave de cruzamento (presumivelmente CNPJ). Determina se a integração é esforço M ou subprojeto. Bloqueia score comercial e motor de recomendação.
@@ -192,6 +193,23 @@ Decisão tomada. Justificativa: ver seção "Arquitetura" acima.
 
 ### #4 — "FK's": segunda marca
 Co-branding com Everest. Toda saída visível usa "Everest/FK's". Paleta/logo FK's necessários antes de finalizar o PDF comercial — não bloqueia o desenvolvimento.
+
+### #5 — Deploy em produção (Render) — ago/2026
+Sistema hospedado em `https://cnpj-radar.onrender.com`, plano free, região Oregon (EUA), serviço único (backend NestJS serve o build do frontend no mesmo domínio via `app.useStaticAssets`, evitando CORS). Deploy gerenciado por Blueprint (`render.yaml`).
+
+**Gotchas de deploy no Render (não repetir a investigação):**
+- Mudança em `render.yaml` (buildCommand, env vars) **não** aplica sozinha com `git push` — precisa de "Manual Sync" no dashboard do Blueprint. Só código novo re-deploya automaticamente.
+- `npx playwright install --with-deps` falha no build do Render (não tem `sudo`). Usar só `npx playwright install chromium`.
+- O Chromium baixado no build pode não estar visível em runtime (paths diferentes entre build e run). Fix: env var `PLAYWRIGHT_BROWSERS_PATH=0` (instala dentro de `node_modules/playwright-core`, que persiste).
+
+**Bancos migrados para nova conta/organização Supabase** (a original bateu o limite de 2 projetos ativos do free tier). cnpj-radar: projeto `qqkfhahuwkrcnwhibmpj`. Migração feita sem perda de dados (conferida linha a linha por tabela).
+
+**Automação de certidões — estado real após deploy (não o que o código sugere):**
+- Todos os 8 tipos de certidão têm scraper implementado (não é mais "pendente" como o `05-scraping-certidoes.md` antigo dizia — ver esse arquivo, também atualizado).
+- **CND Federal**: implementado com hCaptcha + 2captcha, mas a conta 2captcha do cliente está com saldo zerado — ação do cliente, não bug.
+- **FGTS/CRF**: implementado e **testado funcionando 100%** quando rodado de uma rede brasileira normal (validado localmente em ago/2026 — resultado REGULAR, PDF baixado, validade extraída corretamente). Em produção retorna sempre `INDISPONIVEL` porque **o WAF (Azion) do portal da Caixa bloqueia com 403 o IP do datacenter do Render** (edge Denver, IP não-residencial). Confirmado via captura de diagnóstico no próprio scraper (`certidoes-scraper.service.ts`, mensagem de erro inclui título/corpo da página retornada).
+- **Implicação:** isso não é bug de seletor nem de timeout — é bloqueio de IP/geolocalização, comum em portais de governo que banem faixas de nuvem conhecidas (AWS/GCP/Azure/Render/Vercel — não é exclusivo de "fora do Brasil"). Migrar hospedagem para outra nuvem americana não resolveria; um Lambda da Vercel em `gru1` (São Paulo) provavelmente também seria bloqueado, porque a faixa de IP da AWS ainda é reconhecível como datacenter.
+- **Caminho planejado:** migração de hospedagem para **VPS** (decisão do cliente, ago/2026), preferencialmente com IP brasileiro "normal" — isso deve destravar o FGTS automaticamente, sem mudança de código. Se a VPS escolhida ainda cair em bloqueio, a alternativa é proxy/egress brasileiro dedicado para as chamadas de scraping.
 
 ---
 
