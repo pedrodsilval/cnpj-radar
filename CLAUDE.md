@@ -10,6 +10,7 @@ Este é o documento-âncora do agente. Leia-o inteiro uma vez por sessão. Para 
 
 | Tipo de tarefa | Arquivo a carregar |
 | --- | --- |
+| **Qualquer bug report, "por que X não funciona", ou antes de mexer em certidões/n8n/segurança** | `docs/pendencias-tecnicas.md` — auditoria completa de ago/2026, evita re-investigar o que já está mapeado |
 | Fluxo operacional geral | `docs/arquitetura/01-fluxo-principal.md` |
 | Decisão de camadas / separação de responsabilidades | `docs/arquitetura/02-arquitetura.md` |
 | Qualquer coisa envolvendo n8n | `docs/arquitetura/03-workflows-n8n.md` |
@@ -210,6 +211,8 @@ Sistema hospedado em `https://cnpj-radar.onrender.com`, plano free, região Oreg
 - **FGTS/CRF**: implementado e **testado funcionando 100%** quando rodado de uma rede brasileira normal (validado localmente em ago/2026 — resultado REGULAR, PDF baixado, validade extraída corretamente). Em produção retorna sempre `INDISPONIVEL` porque **o WAF (Azion) do portal da Caixa bloqueia com 403 o IP do datacenter do Render** (edge Denver, IP não-residencial). Confirmado via captura de diagnóstico no próprio scraper (`certidoes-scraper.service.ts`, mensagem de erro inclui título/corpo da página retornada).
 - **Implicação:** isso não é bug de seletor nem de timeout — é bloqueio de IP/geolocalização, comum em portais de governo que banem faixas de nuvem conhecidas (AWS/GCP/Azure/Render/Vercel — não é exclusivo de "fora do Brasil"). Migrar hospedagem para outra nuvem americana não resolveria; um Lambda da Vercel em `gru1` (São Paulo) provavelmente também seria bloqueado, porque a faixa de IP da AWS ainda é reconhecível como datacenter.
 - **Caminho planejado:** migração de hospedagem para **VPS** (decisão do cliente, ago/2026), preferencialmente com IP brasileiro "normal" — isso deve destravar o FGTS automaticamente, sem mudança de código. Se a VPS escolhida ainda cair em bloqueio, a alternativa é proxy/egress brasileiro dedicado para as chamadas de scraping.
+
+**Auditoria completa de pendências (ago/2026):** ver `docs/pendencias-tecnicas.md` — cobre certidões faltando (Municipal/Inscrição Municipal sem nenhuma automação real, Estadual/IE só cobrem Bahia), estado real do n8n (100% inativo, URLs hardcoded pra Docker local, nunca foi pra produção), e um SQL injection encontrado e corrigido em `painel.service.ts`.
 
 ---
 
