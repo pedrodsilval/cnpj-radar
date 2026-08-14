@@ -1,6 +1,6 @@
 import { CertidaoTipo, CertidaoStatus, CertidaoOrigem } from '../database/entities/certidao.entity';
 
-export class RegistrarDto {
+export interface RegistrarDto {
   tipo: CertidaoTipo;
   status?: CertidaoStatus;
   validade?: string;
@@ -9,7 +9,7 @@ export class RegistrarDto {
   urlArquivo?: string;
 }
 
-export class AtualizarStatusDto {
+export interface AtualizarStatusDto {
   status: CertidaoStatus;
   validade?: string;
   observacoes?: string;

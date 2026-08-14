@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { CredenciaisService } from './credenciais.service';
-import { CriarCredencialDto, AtualizarCredencialDto } from './credenciais.dto';
+import type { CriarCredencialDto, AtualizarCredencialDto } from './credenciais.dto';
 import { Roles } from '../auth/decorators/roles.decorator';
 
 @Roles('administrador')

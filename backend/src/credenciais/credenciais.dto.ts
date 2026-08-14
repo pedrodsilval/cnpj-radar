@@ -1,10 +1,10 @@
-export class CriarCredencialDto {
+export interface CriarCredencialDto {
   tipo: string;
   descricao: string;
   valor: string;
 }
 
-export class AtualizarCredencialDto {
+export interface AtualizarCredencialDto {
   descricao?: string;
   valor?: string;
   ativo?: boolean;
