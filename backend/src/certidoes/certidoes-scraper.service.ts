@@ -76,7 +76,25 @@ export class CertidoesScraperService {
         // diferentes) e timeout maior — o servidor roda fora do Brasil, então a latência
         // até o portal da Caixa pode ultrapassar o timeout padrão de 30s do Playwright.
         const campoInscricao = page.locator('input[id*="inscricao" i], input[name*="inscricao" i]').first();
-        await campoInscricao.waitFor({ state: 'visible', timeout: 60_000 });
+        try {
+          await campoInscricao.waitFor({ state: 'visible', timeout: 60_000 });
+        } catch {
+          // Diagnóstico: se o campo não aparece, precisamos ver o que o portal
+          // realmente serviu (página de bloqueio/geo-restrição vs. carregamento lento).
+          // O snippet vai direto na mensagem retornada — é o único jeito de inspecionar
+          // isso sem acesso aos logs do Render.
+          const titulo = await page.title().catch(() => '(sem título)');
+          const corpo = ((await page.textContent('body').catch(() => '')) ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 400);
+          this.logger.error(`FGTS: campo de inscrição não apareceu. url=${page.url()} title="${titulo}" corpo="${corpo}"`);
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `FGTS: campo de inscrição não apareceu no portal. title="${titulo}" corpo="${corpo}"`,
+          };
+        }
         await campoInscricao.fill(cnpjLimpo, { timeout: 60_000 });
 
         await Promise.all([
