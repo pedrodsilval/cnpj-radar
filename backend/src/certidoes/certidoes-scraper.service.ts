@@ -72,8 +72,12 @@ export class CertidoesScraperService {
           { waitUntil: 'networkidle', timeout: 30_000 },
         );
 
-        const campoInscricao = page.locator('input[id*="inscricao"], input[name*="inscricao"], input[id*="Inscricao"]').first();
-        await campoInscricao.fill(cnpjLimpo);
+        // Seletor case-insensitive (o portal já usou "inscricao" e "Inscricao" em versões
+        // diferentes) e timeout maior — o servidor roda fora do Brasil, então a latência
+        // até o portal da Caixa pode ultrapassar o timeout padrão de 30s do Playwright.
+        const campoInscricao = page.locator('input[id*="inscricao" i], input[name*="inscricao" i]').first();
+        await campoInscricao.waitFor({ state: 'visible', timeout: 60_000 });
+        await campoInscricao.fill(cnpjLimpo, { timeout: 60_000 });
 
         await Promise.all([
           page.waitForResponse((r) => r.url().includes('caixa.gov.br'), { timeout: 20_000 }),
