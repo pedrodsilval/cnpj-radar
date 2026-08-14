@@ -11,6 +11,7 @@ Este é o documento-âncora do agente. Leia-o inteiro uma vez por sessão. Para 
 | Tipo de tarefa | Arquivo a carregar |
 | --- | --- |
 | **Qualquer bug report, "por que X não funciona", ou antes de mexer em certidões/n8n/segurança** | `docs/pendencias-tecnicas.md` — auditoria completa de ago/2026, evita re-investigar o que já está mapeado |
+| Concorrência, "comprar vs. construir", ou contexto de mercado pro módulo de certidões/painel | `docs/pesquisa-veri-gestao-fiscal.md` — pesquisa sobre a Veri, SaaS comercial que resolve o mesmo problema |
 | Fluxo operacional geral | `docs/arquitetura/01-fluxo-principal.md` |
 | Decisão de camadas / separação de responsabilidades | `docs/arquitetura/02-arquitetura.md` |
 | Qualquer coisa envolvendo n8n | `docs/arquitetura/03-workflows-n8n.md` |
