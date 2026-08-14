@@ -260,7 +260,7 @@ export class CertidoesScraperService {
           }
 
           this.logger.log(`CNDT 2captcha tentativa ${tentativa}: resposta "${respostaCaptcha}"`);
-          await page.locator('#idCampoResposta').fill(respostaCaptcha);
+          await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
@@ -273,6 +273,9 @@ export class CertidoesScraperService {
             this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado.`);
             continue;
           }
+
+          // CAPTCHA aceito pelo site — contribui para o dataset de treino
+          this.contribuirDataset(imageSrc, respostaCaptcha).catch(() => {});
 
           if (resultado.status === 'REGULAR' || resultado.status === 'IRREGULAR') {
             resultado.urlArquivo = await this.gerarPdfCndt(page, cnpjLimpo);
@@ -322,7 +325,7 @@ export class CertidoesScraperService {
             continue;
           }
 
-          await page.locator('#idCampoResposta').fill(respostaCaptcha);
+          await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
@@ -355,6 +358,26 @@ export class CertidoesScraperService {
         mensagem: 'CNDT TST: CAPTCHA não resolvido. Cadastre uma chave 2captcha em Configurações para automação confiável.',
       };
     });
+  }
+
+  // Envia imagem + label correto para o dataset de treino da api_captcha
+  private async contribuirDataset(imageSrc: string, label: string): Promise<void> {
+    const apiUrl = process.env.CAPTCHA_API_URL ?? 'http://localhost:8000';
+    const apiKey = process.env.CAPTCHA_API_KEY ?? 'dev-key';
+    const base64 = imageSrc.replace(/^data:image\/\w+;base64,/, '');
+    try {
+      const res = await fetch(`${apiUrl}/dataset/contribute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({ image_b64: base64, label: label.toUpperCase(), source: 'cndt_2captcha' }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.ok) {
+        this.logger.log(`Dataset: imagem CNDT contribuida com label "${label}"`);
+      }
+    } catch {
+      // Falha silenciosa — nao impacta o fluxo principal
+    }
   }
 
   // Resolve CAPTCHA de imagem: tenta api_captcha local primeiro, cai no 2captcha se falhar
