@@ -53,10 +53,27 @@ O plano original da Fase 3 (`docs/roadmap/fase-3-regularidade.md`) lista 8 tipos
 | CNDT Trabalhista | ✅ Sim | Nacional (idem) |
 | **Certidão Estadual** | ⚠️ Parcial | **Só Bahia** (`consultarCndEstadual`, SEFAZ-BA). Outros 26 estados: sempre devolve link manual pro portal da SEFAZ do estado, nunca tenta automatizar. |
 | **Inscrição Estadual (IE)** | ⚠️ Parcial | **Só Bahia** (`consultarIeSefazBa`). Mesma limitação. Curiosamente `CERTIDAO_AUTOMATIZAVEL[INSCRICAO_ESTADUAL] = false` no código — a UI nem mostra o selo "Automático" pra esse tipo, apesar de ter automação real funcionando pra BA. |
-| **Certidão Municipal** | ⚠️ Parcial (✅ desde 14/08/2026) | **Salvador**: automatizada via `consultarCertidaoMunicipalSalvador()` — Certidão de Regularidade Fiscal PJ (SEFAZ+PGMS), sem login, endpoint público `ProxyValidaCNPJCertidao.asp`. Caminho de erro (não inscrito/insuficiente) validado contra resposta real do portal; caminho de sucesso (código "0", emissão do PDF via Playwright) **não testado com CNPJ regular real** — não havia nenhum à mão na auditoria. Outros municípios continuam stub com link manual (mapa `portaisMunicipais` tem só 5 entradas, e RS/PR apontam erroneamente pra portais estaduais). |
+| **Certidão Municipal** | ⚠️ Parcial (✅ desde 14/08/2026) | **Salvador**: automatizada via `consultarCertidaoMunicipalSalvador()` — Certidão de Regularidade Fiscal PJ (SEFAZ+PGMS), sem login, endpoint público `ProxyValidaCNPJCertidao.asp`. Caminho de erro (não inscrito/insuficiente) validado contra resposta real do portal — testado com 2 CNPJs reais de Salvador (incluindo o da própria Everest), **ambos caíram em "informações insuficientes" (código "1")**, nenhum bateu no caminho "regular" (código "0"). Caminho de sucesso **ainda não testado com CNPJ regular real**. Outros municípios continuam stub com link manual (mapa `portaisMunicipais` tem só 5 entradas, e RS/PR apontam erroneamente pra portais estaduais). |
 | **Inscrição Municipal (IM/CCM)** | ❌ **Nenhuma** | `consultarInscricaoMunicipal()` — 100% stub, nenhuma automação real pra nenhum município, nem Salvador. Investigado em 14/08/2026: a ferramenta pública da SEFAZ Salvador pra dados cadastrais (`CertidaoDadosCadastraisFrm.aspx`) pede o **número da inscrição municipal como entrada**, não o CNPJ — ou seja, exige já saber o dado que a gente quer descobrir. Automatizar isso exigiria primeiro resolver como obter a inscrição a partir do CNPJ (não achado nenhum caminho público pra isso). |
 
 **Resumindo pra priorização:** se o objetivo é aumentar cobertura automática, os dois itens com ROI mais claro são **Certidão Municipal e Inscrição Municipal de Salvador** (não têm nada implementado hoje, e é a cidade onde a maioria dos clientes da Everest/FK's provavelmente está) — o portal é o NFSe da Prefeitura (`https://nfse.salvador.ba.gov.br`), que **exige login**, então precisaria de credencial cadastrada (como já existe pra certificado A1) antes de dar pra automatizar.
+
+### 3.1 Por que "código 1" (informações insuficientes) aparece tanto — decisão pendente
+
+Testado ao vivo em 14/08/2026 com 2 CNPJs reais de Salvador (Everest, `30327128000125`, e outro fornecido pelo usuário, `27950582000123`) — **os dois** caíram em "informações insuficientes para emissão automática", nunca no caminho "regular". A resposta do proxy inclui, nos dois casos, uma coluna que dispara a mensagem "Para consultar sua situação fiscal acesse o **PAD**".
+
+**PAD = Parcelamento Administrativo de Débitos** (`pad.salvador.ba.gov.br`) — não é uma ferramenta de consulta, é o programa de **parcelamento de dívidas** da prefeitura. Isso sugere que a coluna que dispara esse redirecionamento provavelmente indica que **o CNPJ tem algum débito/parcelamento em aberto** com a Fazenda Municipal — o sistema não emite negativa automática pra quem tem pendência. Ou seja, "informações insuficientes" pode não ser uma limitação técnica do endpoint, e sim um sinal real de pendência fiscal.
+
+O acesso ao PAD exige login no sistema **SenhaWeb / Nota Salvador** (mesmo login do portal NFSe, `nfse.salvador.ba.gov.br`) — investigado o mecanismo desse login:
+- **Usuário/CNPJ + senha**: exige resolver um **captcha de imagem real** (servido por `captcha.aspx`, não é decorativo como o do endpoint de certidão) — mesma dependência de 2captcha que já bloqueia CND Federal/CNDT/Dívida Ativa (ver 2.2). Sem saldo no 2captcha, não funciona.
+- **"Acessar com certificado digital (ICP-Brasil)"**: existe um botão de login via certificado digital, que evitaria o captcha inteiramente. A Everest/FK's já tem um **Certificado A1** cadastrado em Configurações → Credenciais — mas **não foi confirmado se esse certificado é um e-CNPJ válido da empresa com autorização pra esse portal especificamente** (o usuário não tinha certeza no momento da pergunta).
+
+**Status: decisão pendente do usuário** (precisa conversar com o responsável/chefe antes de decidir). Opções discutidas:
+1. Marcar "código 1" automaticamente como `IRREGULAR` (em vez de `INDISPONIVEL`) já que provavelmente indica pendência real — não escolhida ainda, não implementada.
+2. Estender a automação com login completo no Nota Salvador (usuário/senha + 2captcha, ou certificado digital se confirmado válido) — maior escopo, não iniciado.
+3. Deixar como está — status atual (`INDISPONIVEL` genérico) permanece até decisão.
+
+**Não fazer sem essa decisão:** não presumir que "código 1" = irregular no código sem confirmação explícita do usuário — a inferência é razoável mas não 100% certa (poderia haver outros motivos pra "informações insuficientes" além de débito).
 
 ---
 
