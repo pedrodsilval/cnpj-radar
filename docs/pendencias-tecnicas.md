@@ -32,6 +32,8 @@
 - Conta 2captcha do cliente está com **saldo zerado** — confirmado pelo próprio usuário no site do 2captcha. Ação do cliente (recarregar saldo), não temos o que fazer no código.
 - Formato de requisição pro 2captcha já corrigido nesta sessão (form-urlencoded, não JSON) — commit `81bc698`.
 
+> ⚠️ **Decisão do usuário (14/08/2026): pausar investimento adicional em automação de e-CAC (CND Federal, PGFN, futura API Integra Contador) até o fim das eleições federais de 2026.** O motivo é a incerteza sobre como o governo federal vai conduzir o e-CAC após a mudança/confirmação de gestão — o sistema pode ser reformulado ou ter prioridades alteradas. Isso **não bloqueia** as outras frentes de certidões (FGTS/Caixa, SEFAZ estadual/municipal de Salvador, login no Nota Salvador — ver seção 3.1) que não dependem do e-CAC. Não propor mais trabalho nessa frente específica sem reconfirmar com o usuário que a situação política já se resolveu.
+
 ### 2.3 n8n — 100% inativo, nunca foi para produção
 - Os 5 workflows em `n8n/workflows/*.json` têm **`"active": false`** — nenhum roda.
 - **Todas as URLs internas apontam pra `http://host.docker.internal:3000`** (rede Docker local) — isso só funciona quando n8n roda em Docker no mesmo host que o backend local. Não há absolutamente nenhuma referência à URL de produção (`https://cnpj-radar.onrender.com`) em nenhum workflow.
