@@ -382,9 +382,13 @@ export class CertidoesScraperService {
     });
   }
 
-  // Envia imagem + label correto para o dataset de treino da api_captcha
+  // Envia imagem + label correto para o dataset de treino da api_captcha.
+  // Sem CAPTCHA_API_URL configurada (nunca configurada em produção até
+  // 21/08/2026), não há pra onde mandar — não silenciosamente tentar
+  // localhost:8000, que é o próprio container em produção.
   private async contribuirDataset(imageSrc: string, label: string): Promise<void> {
-    const apiUrl = process.env.CAPTCHA_API_URL ?? 'http://localhost:8000';
+    const apiUrl = process.env.CAPTCHA_API_URL;
+    if (!apiUrl) return;
     const apiKey = process.env.CAPTCHA_API_KEY ?? 'dev-key';
     const base64 = imageSrc.replace(/^data:image\/\w+;base64,/, '');
     try {

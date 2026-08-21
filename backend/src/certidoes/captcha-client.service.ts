@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-const CAPTCHA_API_URL = process.env.CAPTCHA_API_URL ?? 'http://localhost:8000';
+// Sem CAPTCHA_API_URL configurada, não há para onde chamar — o default
+// (localhost:8000) só faz sentido em dev local, nunca em produção (aponta
+// pro próprio container do Render, onde nada escuta nessa porta). Chamar
+// mesmo assim significa esperar o timeout inteiro (120s) sem chance de
+// sucesso, em cada uma das 3 tentativas de cada certidão que usa captcha.
+const CAPTCHA_API_URL = process.env.CAPTCHA_API_URL ?? null;
 const CAPTCHA_API_KEY = process.env.CAPTCHA_API_KEY ?? 'dev-key';
 
 interface CaptchaResponse {
@@ -31,6 +36,8 @@ export class CaptchaClientService {
   }
 
   private async chamar(body: Record<string, string>): Promise<string | null> {
+    if (!CAPTCHA_API_URL) return null;
+
     try {
       const res = await fetch(`${CAPTCHA_API_URL}/solve`, {
         method: 'POST',
