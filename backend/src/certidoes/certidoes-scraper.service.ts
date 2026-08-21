@@ -1111,14 +1111,16 @@ export class CertidoesScraperService {
     const BASE = 'https://servicos.receitafederal.gov.br/servico/certidoes/api';
     const PAGE_URL = 'https://servicos.receitafederal.gov.br/servico/certidoes/';
     const SITEKEY = 'f214a120-a07a-4b28-907a-bfa6b96257ae';
+    let ultimoErroCaptcha: string | null = null;
 
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
         // 1. Resolve hCaptcha via 2captcha
         this.logger.log(`CND Federal tentativa ${tentativa}: resolvendo hCaptcha...`);
-        const captchaToken = await this.resolver2captchaHcaptcha(apiKey, SITEKEY, PAGE_URL);
+        const { token: captchaToken, erro: erroCaptcha } = await this.resolver2captchaHcaptcha(apiKey, SITEKEY, PAGE_URL);
         if (!captchaToken) {
-          this.logger.warn(`CND Federal tentativa ${tentativa}: hCaptcha não resolvido.`);
+          ultimoErroCaptcha = erroCaptcha;
+          this.logger.warn(`CND Federal tentativa ${tentativa}: hCaptcha não resolvido (${erroCaptcha}).`);
           continue;
         }
 
@@ -1236,20 +1238,24 @@ export class CertidoesScraperService {
     return {
       status: 'INDISPONIVEL',
       validade: null,
-      mensagem: 'CND Federal: hCaptcha não resolvido após 3 tentativas.',
+      mensagem: `CND Federal: hCaptcha não resolvido após 3 tentativas. Último erro: ${ultimoErroCaptcha ?? 'desconhecido'}.`,
     };
   }
 
   // Resolve hCaptcha: tenta api_captcha local primeiro, cai no 2captcha se falhar
+  // Retorna o token quando resolve, ou { erro } com o motivo exato quando falha —
+  // sem isso, uma falha de captcha vira sempre "não resolvido" genérico e não dá
+  // pra saber se foi chave inválida, saldo zerado, sitekey mudou etc. sem acesso
+  // aos logs do Render.
   private async resolver2captchaHcaptcha(
     apiKey: string,
     sitekey: string,
     pageUrl: string,
-  ): Promise<string | null> {
+  ): Promise<{ token: string | null; erro: string | null }> {
     const localToken = await this.captchaClient.resolverHcaptcha(sitekey, pageUrl);
     if (localToken) {
       this.logger.log('CND Federal: hCaptcha resolvido localmente (api_captcha).');
-      return localToken;
+      return { token: localToken, erro: null };
     }
 
     this.logger.log('CND Federal: api_captcha não resolveu — acionando 2captcha (pago).');
@@ -1266,8 +1272,9 @@ export class CertidoesScraperService {
       });
       const submitJson = (await submitRes.json()) as { status: number; request: string };
       if (submitJson.status !== 1) {
+        const erro = `submit: ${submitJson.request}`;
         this.logger.warn(`2captcha hCaptcha submit erro: ${JSON.stringify(submitJson)}`);
-        return null;
+        return { token: null, erro };
       }
 
       const captchaId = submitJson.request;
@@ -1277,18 +1284,19 @@ export class CertidoesScraperService {
           `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
         );
         const resJson = (await resRes.json()) as { status: number; request: string };
-        if (resJson.status === 1) return resJson.request;
+        if (resJson.status === 1) return { token: resJson.request, erro: null };
         if (resJson.request !== 'CAPCHA_NOT_READY') {
+          const erro = `resultado: ${resJson.request}`;
           this.logger.warn(`2captcha hCaptcha result erro: ${JSON.stringify(resJson)}`);
-          return null;
+          return { token: null, erro };
         }
       }
 
       this.logger.warn('2captcha hCaptcha: timeout — sem resposta em 120s.');
-      return null;
+      return { token: null, erro: 'timeout: sem resposta do 2captcha em 120s' };
     } catch (err) {
       this.logger.warn(`2captcha hCaptcha erro de rede: ${err}`);
-      return null;
+      return { token: null, erro: `erro de rede: ${err}` };
     }
   }
 
