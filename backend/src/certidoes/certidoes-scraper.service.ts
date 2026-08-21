@@ -1086,7 +1086,12 @@ export class CertidoesScraperService {
   // CND Federal — Receita Federal / PGFN
   // Portal: https://servicos.receitafederal.gov.br/servico/certidoes/
   // Proteção: hCaptcha invisible (sitekey f214a120-a07a-4b28-907a-bfa6b96257ae)
-  // Fluxo: 2captcha resolve hCaptcha → validar-contribuinte (set-cookie) → Emissao (PDF base64)
+  // Fluxo (confirmado em 21/08/2026 inspecionando o site real — o antigo endpoint
+  // consulta/validar-contribuinte não é mais o que o front-end usa):
+  //   2captcha resolve hCaptcha → POST Emissao/verificar (com X-Captcha-Token,
+  //   seta cookie de sessão; "status":"Emitida" quando já existe certidão válida,
+  //   mas isso não impede seguir) → POST Emissao (usa o cookie, não o token; PDF
+  //   em base64 quando statusEmissao="Sucesso").
   // ---------------------------------------------------------------------------
   async consultarCndFederal(cnpj: string): Promise<ResultadoScraper> {
     const cnpjLimpo = cnpj.replace(/\D/g, '');
@@ -1124,8 +1129,11 @@ export class CertidoesScraperService {
           continue;
         }
 
-        // 2. Valida CNPJ com o token (seta cookie de sessão)
-        const validarRes = await fetch(`${BASE}/consulta/validar-contribuinte`, {
+        // 2. Verifica com o token (seta cookie de sessão). "status":"Emitida" só
+        // indica que já existe uma certidão válida — não impede seguir pra
+        // emissão, é o /Emissao que decide se consegue emitir uma negativa nova
+        // (o próprio site sempre segue pra /Emissao independente desse status).
+        const verificarRes = await fetch(`${BASE}/Emissao/verificar`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1133,47 +1141,23 @@ export class CertidoesScraperService {
             'Origin': PAGE_URL,
             'Referer': PAGE_URL,
           },
-          body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ' }),
+          body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ', tipoContribuinteEnum: 'CNPJ' }),
         });
 
-        const setCookieRaw = validarRes.headers.get('set-cookie') ?? '';
-        const validarJson = (await validarRes.json()) as {
-          statusValidacao: string;
-          codigo?: string;
-          mensagem?: string;
-        };
-
-        this.logger.log(`CND Federal validar-contribuinte: ${JSON.stringify(validarJson)}`);
-
-        switch (validarJson.statusValidacao) {
-          case 'CaptchaFalhaValidacao':
-            this.logger.warn(`CND Federal tentativa ${tentativa}: hCaptcha rejeitado pelo servidor.`);
-            continue;
-
-          case 'NaoCadastrado':
-            return { status: 'INDISPONIVEL', validade: null, mensagem: 'CND Federal: CNPJ não cadastrado na Receita Federal.' };
-
-          case 'CnpjFilial':
-            return { status: 'INDISPONIVEL', validade: null, mensagem: 'CND Federal: CNPJ é de filial. A certidão deve ser consultada pelo CNPJ da matriz.' };
-
-          case 'CertidaoNaoPermitida':
-            return { status: 'INDISPONIVEL', validade: null, mensagem: 'CND Federal: certidão não permitida para este CNPJ.' };
-
-          case 'SistemaIndisponivel':
-            return { status: 'INDISPONIVEL', validade: null, mensagem: 'CND Federal: sistema da Receita Federal indisponível. Tente mais tarde.' };
-
-          case 'NaoEmitida':
-            return {
-              status: 'IRREGULAR',
-              validade: null,
-              mensagem: 'CND Federal: certidão negativa não pode ser emitida — empresa possui débitos com a Receita Federal / PGFN.',
-            };
+        if (!verificarRes.ok) {
+          this.logger.warn(`CND Federal tentativa ${tentativa}: Emissao/verificar HTTP ${verificarRes.status} — provável rejeição do captcha.`);
+          ultimoErroCaptcha = `Emissao/verificar HTTP ${verificarRes.status}`;
+          continue;
         }
 
-        // statusValidacao === 'Emitida' (ou outro válido) — prossegue para emissão
+        const setCookieRaw = verificarRes.headers.get('set-cookie') ?? '';
+        const verificarJson = (await verificarRes.json().catch(() => ({}))) as { status?: string };
+        this.logger.log(`CND Federal Emissao/verificar: ${JSON.stringify(verificarJson)}`);
+
         const cookieHeader = this.extrairCookiesRelevantes(setCookieRaw);
 
-        // 3. Emite a certidão (usa o cookie de sessão)
+        // 3. Emite a certidão (usa o cookie de sessão do passo anterior — este
+        // endpoint não recebe o token de captcha diretamente).
         const emissaoRes = await fetch(`${BASE}/Emissao`, {
           method: 'POST',
           headers: {
@@ -1182,24 +1166,28 @@ export class CertidoesScraperService {
             'Origin': PAGE_URL,
             'Referer': PAGE_URL,
           },
-          body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ', tipoContribuinteEnum: 'Cnpj' }),
+          body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ', tipoContribuinteEnum: 'CNPJ' }),
         });
 
         const emissaoJson = (await emissaoRes.json()) as {
           statusEmissao?: string;
           pdf?: string;
-          mensagem?: string;
+          mensagem?: { texto?: string; data?: string } | string;
           dataValidade?: string;
           numeroCertidao?: string;
         };
 
         this.logger.log(`CND Federal Emissao statusEmissao=${emissaoJson.statusEmissao}`);
 
+        const mensagemTexto = typeof emissaoJson.mensagem === 'string'
+          ? emissaoJson.mensagem
+          : emissaoJson.mensagem?.texto;
+
         if (emissaoJson.statusEmissao === 'SemDireitoCertidao') {
           return {
             status: 'IRREGULAR',
             validade: null,
-            mensagem: 'CND Federal: empresa não tem direito à certidão negativa.',
+            mensagem: mensagemTexto ?? 'CND Federal: empresa não tem direito à certidão negativa.',
           };
         }
 
@@ -1207,7 +1195,7 @@ export class CertidoesScraperService {
           return {
             status: 'INDISPONIVEL',
             validade: null,
-            mensagem: `CND Federal: resposta inesperada da emissão (status=${emissaoJson.statusEmissao ?? 'desconhecido'}).`,
+            mensagem: mensagemTexto ?? `CND Federal: resposta inesperada da emissão (status=${emissaoJson.statusEmissao ?? 'desconhecido'}).`,
           };
         }
 
