@@ -257,6 +257,8 @@ export class CertidoesScraperService {
 
   // CNDT via 2captcha — resolve o CAPTCHA de imagem usando serviço pago
   private async consultarCndtCom2captcha(cnpjLimpo: string, apiKey: string): Promise<ResultadoScraper> {
+    let ultimoErroCaptcha: string | null = null;
+
     return this.comBrowser(async (browser) => {
       const page = await this.novaPage(browser, true);
 
@@ -275,9 +277,10 @@ export class CertidoesScraperService {
             continue;
           }
 
-          const respostaCaptcha = await this.resolver2captchaImagem(imageSrc, apiKey);
+          const { token: respostaCaptcha, erro: erroCaptcha } = await this.resolver2captchaImagem(imageSrc, apiKey);
           if (!respostaCaptcha) {
-            this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: sem resposta do serviço.`);
+            ultimoErroCaptcha = erroCaptcha;
+            this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: sem resposta do serviço (${erroCaptcha}).`);
             continue;
           }
 
@@ -292,7 +295,8 @@ export class CertidoesScraperService {
           const resultado = this.parseCndt(texto);
 
           if (resultado.status === 'INDISPONIVEL' && resultado.mensagem.includes('CAPTCHA')) {
-            this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado.`);
+            ultimoErroCaptcha = `site rejeitou a resposta "${respostaCaptcha}" (resolvida pelo 2captcha)`;
+            this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado pelo site (resposta "${respostaCaptcha}").`);
             continue;
           }
 
@@ -312,7 +316,11 @@ export class CertidoesScraperService {
         }
       }
 
-      return { status: 'INDISPONIVEL', validade: null, mensagem: 'CNDT: CAPTCHA não resolvido pelo 2captcha após 3 tentativas.' };
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: `CNDT: CAPTCHA não resolvido pelo 2captcha após 3 tentativas. Último erro: ${ultimoErroCaptcha ?? 'desconhecido'}.`,
+      };
     });
   }
 
@@ -406,12 +414,15 @@ export class CertidoesScraperService {
     }
   }
 
-  // Resolve CAPTCHA de imagem: tenta api_captcha local primeiro, cai no 2captcha se falhar
-  private async resolver2captchaImagem(imageSrc: string, apiKey: string): Promise<string | null> {
+  // Resolve CAPTCHA de imagem: tenta api_captcha local primeiro, cai no 2captcha se falhar.
+  // Retorna { token, erro } — sem o motivo exato, toda falha vira "não resolvido"
+  // genérico e não dá pra saber se foi chave/saldo, timeout ou o próprio 2captcha
+  // dizendo que a imagem é ilegível.
+  private async resolver2captchaImagem(imageSrc: string, apiKey: string): Promise<{ token: string | null; erro: string | null }> {
     const localToken = await this.captchaClient.resolverImagem(imageSrc);
     if (localToken) {
       this.logger.log('CNDT: CAPTCHA resolvido localmente (api_captcha).');
-      return localToken;
+      return { token: localToken, erro: null };
     }
 
     this.logger.log('CNDT: api_captcha não resolveu — acionando 2captcha (pago).');
@@ -425,7 +436,7 @@ export class CertidoesScraperService {
       const submitJson = (await submitRes.json()) as { status: number; request: string };
       if (submitJson.status !== 1) {
         this.logger.warn(`2captcha submit erro: ${JSON.stringify(submitJson)}`);
-        return null;
+        return { token: null, erro: `submit: ${submitJson.request}` };
       }
 
       const captchaId = submitJson.request;
@@ -436,18 +447,18 @@ export class CertidoesScraperService {
           `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
         );
         const resJson = (await resRes.json()) as { status: number; request: string };
-        if (resJson.status === 1) return resJson.request;
+        if (resJson.status === 1) return { token: resJson.request, erro: null };
         if (resJson.request !== 'CAPCHA_NOT_READY') {
           this.logger.warn(`2captcha result erro: ${JSON.stringify(resJson)}`);
-          return null;
+          return { token: null, erro: `resultado: ${resJson.request}` };
         }
       }
 
       this.logger.warn('2captcha: timeout — sem resposta em 60s.');
-      return null;
+      return { token: null, erro: 'timeout: sem resposta em 60s' };
     } catch (err) {
       this.logger.warn(`2captcha erro de rede: ${err}`);
-      return null;
+      return { token: null, erro: `erro de rede: ${err}` };
     }
   }
 
@@ -1149,8 +1160,12 @@ export class CertidoesScraperService {
         });
 
         if (!verificarRes.ok) {
-          this.logger.warn(`CND Federal tentativa ${tentativa}: Emissao/verificar HTTP ${verificarRes.status} — provável rejeição do captcha.`);
-          ultimoErroCaptcha = `Emissao/verificar HTTP ${verificarRes.status}`;
+          // Corpo da resposta ajuda a distinguir token de captcha expirado
+          // (2captcha às vezes demora perto dos 120s, e o token do hCaptcha
+          // tem validade curta) de outros motivos de rejeição.
+          const corpoErro = await verificarRes.text().catch(() => '');
+          this.logger.warn(`CND Federal tentativa ${tentativa}: Emissao/verificar HTTP ${verificarRes.status} — corpo: ${corpoErro.slice(0, 300)}`);
+          ultimoErroCaptcha = `Emissao/verificar HTTP ${verificarRes.status}: ${corpoErro.slice(0, 200)}`;
           continue;
         }
 
