@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { HealthController } from './health/health.controller';
 import { CnpjModule } from './cnpj/cnpj.module';
 import { LeadsModule } from './leads/leads.module';
 import { WorkflowRunsModule } from './workflow-runs/workflow-runs.module';
@@ -37,7 +38,7 @@ import { Usuario } from './database/entities/usuario.entity';
     CredenciaisModule,
     PainelModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule {}
