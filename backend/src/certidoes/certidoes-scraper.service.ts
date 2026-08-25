@@ -1109,6 +1109,30 @@ export class CertidoesScraperService {
     const FORM_URL = 'https://sistemas.sefaz.pmlf.ba.gov.br/webrun/form.jsp?sys=TR2&action=openform&formID=464568210';
     const SITEKEY = '6LdPAGgUAAAAAG8EOv4wan86cAqC37rbEEHmxLDY';
 
+    // Prazo total travado em 100s: uma primeira tentativa real travou
+    // indefinidamente sem nunca retornar (nem sucesso, nem erro logado),
+    // deixando a consulta automática inteira pendurada. Corre a tentativa
+    // de verdade contra esse limite — se estourar, devolve INDISPONIVEL
+    // mesmo que o trabalho em segundo plano ainda esteja rodando (o
+    // browser é fechado normalmente quando ele terminar, via comBrowser).
+    const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY);
+    const limiteDeTempo = new Promise<ResultadoScraper>((resolve) => {
+      setTimeout(() => resolve({
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Certidão Municipal Lauro de Freitas: tempo limite (100s) excedido sem resposta do portal ou do 2captcha.',
+      }), 100_000);
+    });
+
+    return Promise.race([tentativaReal, limiteDeTempo]);
+  }
+
+  private async tentarCertidaoMunicipalLauroDeFreitas(
+    cnpjLimpo: string,
+    chave2captcha: string,
+    FORM_URL: string,
+    SITEKEY: string,
+  ): Promise<ResultadoScraper> {
     return this.comBrowser(async (browser) => {
       const page = await this.novaPage(browser, true);
 
