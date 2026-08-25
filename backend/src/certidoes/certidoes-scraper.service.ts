@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { chromium, Browser, Page } from 'playwright';
 import { CredenciaisService } from '../credenciais/credenciais.service';
@@ -934,6 +934,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalSalvador(cnpjLimpo);
     }
 
+    if (munUpper.includes('LAURO DE FREITAS')) {
+      return this.consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1070,6 +1074,217 @@ export class CertidoesScraperService {
         await context.close();
       }
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Lauro de Freitas (SEFAZ/PMLF, sistema WebRun)
+  // Portal: https://sistemas.sefaz.pmlf.ba.gov.br/webrun/form.jsp?sys=TR2&action=openform&formID=464568210
+  // O formulário fica dentro de um iframe (name="mainform"). "Tipo de
+  // Certidão" é um combo "lookup" (não é <select> nativo) — precisa clicar
+  // pra abrir o popup e clicar na linha certa. Usamos "46 - Certidão
+  // Negativa - Mobiliário" (Cadastro Mobiliário = cadastro econômico de
+  // empresas, o equivalente ao que Salvador chama de SEFAZ/PGMS). Protegido
+  // por reCAPTCHA v2 (sitekey 6LdPAGgUAAAAAG8EOv4wan86cAqC37rbEEHmxLDY) — só
+  // dá pra resolver via 2captcha (não existe solver local pra reCAPTCHA).
+  // Incerteza não verificável sem submeter o formulário de verdade (validar
+  // isso à mão exigiria resolver o captcha manualmente, o que não fazemos):
+  // não confirmamos se o campo "Inscrição" aceita o CNPJ diretamente ou
+  // exige o número da Inscrição Mobiliária (que não temos armazenado pra
+  // empresas arbitrárias). Se não aceitar, a resposta esperada é uma
+  // mensagem de "não encontrado" do próprio site — tratada como
+  // INDISPONIVEL abaixo. Ajustar conforme o que os logs de produção
+  // mostrarem na primeira consulta real.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const chave2captcha = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!chave2captcha) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem:
+          'Certidão Municipal Lauro de Freitas: o portal usa reCAPTCHA. Cadastre uma chave 2captcha em Configurações → Credenciais para habilitar a automação.',
+      };
+    }
+
+    const FORM_URL = 'https://sistemas.sefaz.pmlf.ba.gov.br/webrun/form.jsp?sys=TR2&action=openform&formID=464568210';
+    const SITEKEY = '6LdPAGgUAAAAAG8EOv4wan86cAqC37rbEEHmxLDY';
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser, true);
+
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        const frame = page.frame({ name: 'mainform' });
+        if (!frame) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: 'Certidão Municipal Lauro de Freitas: formulário não carregou (iframe "mainform" ausente).',
+          };
+        }
+
+        // Tipo de Certidão: combo "lookup" — clicar no campo em si não abre o
+        // popup, é preciso clicar no botão-gatilho (ícone) ao lado dele.
+        const tipoCertidaoCombo = frame.locator('#WFRInput772767');
+        await tipoCertidaoCombo.locator('xpath=../button[contains(@class, "input-group-append")]').click();
+        await frame.getByText('46 - Certidão Negativa - Mobiliário', { exact: true }).click({ timeout: 10_000 });
+
+        // Inscrição: melhor esforço com o CNPJ — ver nota acima sobre a incerteza.
+        await frame.locator('#WFRInput772762').fill(cnpjLimpo);
+
+        // Resolve reCAPTCHA v2 via 2captcha e injeta o token no textarea padrão.
+        const { token, erro } = await this.resolver2captchaRecaptcha(chave2captcha, SITEKEY, FORM_URL);
+        if (!token) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Certidão Municipal Lauro de Freitas: reCAPTCHA não resolvido (${erro}).`,
+          };
+        }
+        await frame.evaluate((tok) => {
+          const ta = document.getElementById('g-recaptcha-response') as HTMLTextAreaElement | null;
+          if (ta) {
+            ta.value = tok;
+            ta.dispatchEvent(new Event('change'));
+          }
+        }, token);
+
+        // Captura tanto um download real de arquivo quanto uma navegação
+        // direta pro PDF (content-type application/pdf) — escuta a nível de
+        // contexto, antes do clique, pra não perder a primeira resposta de
+        // uma página nova criada pelo clique. Pega os bytes originais da
+        // resposta (não um "print" da página, que corromperia um PDF nativo).
+        let capturedPdf: Buffer | null = null;
+        let downloadBuffer: Buffer | null = null;
+        const context = page.context();
+        const onResponse = (response: import('playwright').Response) => {
+          if (capturedPdf) return;
+          const ct = response.headers()['content-type'] ?? '';
+          if (ct.includes('application/pdf')) {
+            response.body().then((b) => { capturedPdf = b; }).catch(() => {});
+          }
+        };
+        context.on('response', onResponse);
+        context.on('page', (p) => p.on('response', onResponse));
+        page.once('download', (download) => {
+          download.createReadStream().then((stream) => {
+            if (!stream) return;
+            const chunks: Buffer[] = [];
+            stream.on('data', (c) => chunks.push(c));
+            stream.on('end', () => { downloadBuffer = Buffer.concat(chunks); });
+          }).catch(() => {});
+        });
+
+        const [novaPagina] = await Promise.all([
+          context.waitForEvent('page', { timeout: 15_000 }).catch(() => null),
+          frame.getByRole('button', { name: 'Pesquisar' }).click(),
+        ]);
+
+        const paginaResultado = novaPagina ?? page;
+        await paginaResultado.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+        await page.waitForTimeout(1_500); // dá tempo do response.body() assíncrono resolver
+        context.off('response', onResponse);
+
+        const pdfBuffer = capturedPdf ?? downloadBuffer;
+        if (pdfBuffer) {
+          const urlArquivo = this.salvarPdfBuffer(pdfBuffer, `municipal-laurodefreitas-${cnpjLimpo}`);
+          return {
+            status: 'REGULAR',
+            validade: null,
+            mensagem: 'Certidão Negativa de Débitos Mobiliários (SEFAZ Lauro de Freitas) emitida com sucesso.',
+            urlArquivo,
+          };
+        }
+
+        const texto = (await paginaResultado.textContent('body').catch(() => '')) ?? '';
+        const textoLimpo = texto.replace(/\s+/g, ' ').trim();
+
+        if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|inscri(ç|c)(ã|a)o inv(á|a)lida|n(ã|a)o cadastrad/i.test(textoLimpo)) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Certidão Municipal Lauro de Freitas: CNPJ não localizado no Cadastro Mobiliário (pode exigir Inscrição Mobiliária específica em vez do CNPJ). Resposta do site: ${textoLimpo.slice(0, 300)}`,
+          };
+        }
+
+        // Não conseguimos identificar um PDF de verdade — não arriscamos
+        // declarar REGULAR só com base em texto de página pra um documento
+        // fiscal. Devolve o texto capturado pra diagnóstico.
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Municipal Lauro de Freitas: não foi possível confirmar a emissão automaticamente. Resposta do site: ${textoLimpo.slice(0, 300)}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Lauro de Freitas erro: ${err}`);
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Erro ao consultar Certidão Municipal Lauro de Freitas: ${err}`,
+        };
+      }
+    });
+  }
+
+  // Resolve reCAPTCHA v2 via 2captcha (não existe solver local pra reCAPTCHA
+  // na api_captcha — sempre paga). Espelha resolver2captchaHcaptcha.
+  private async resolver2captchaRecaptcha(
+    apiKey: string,
+    sitekey: string,
+    pageUrl: string,
+  ): Promise<{ token: string | null; erro: string | null }> {
+    try {
+      const submitRes = await fetch('https://2captcha.com/in.php', {
+        method: 'POST',
+        body: new URLSearchParams({
+          key: apiKey,
+          method: 'userrecaptcha',
+          googlekey: sitekey,
+          pageurl: pageUrl,
+          json: '1',
+        }),
+      });
+      const submitJson = (await submitRes.json()) as { status: number; request: string };
+      if (submitJson.status !== 1) {
+        const erro = `submit: ${submitJson.request}`;
+        this.logger.warn(`2captcha reCAPTCHA submit erro: ${JSON.stringify(submitJson)}`);
+        return { token: null, erro };
+      }
+
+      const captchaId = submitJson.request;
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const resRes = await fetch(
+          `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
+        );
+        const resJson = (await resRes.json()) as { status: number; request: string };
+        if (resJson.status === 1) return { token: resJson.request, erro: null };
+        if (resJson.request !== 'CAPCHA_NOT_READY') {
+          const erro = `resultado: ${resJson.request}`;
+          this.logger.warn(`2captcha reCAPTCHA result erro: ${JSON.stringify(resJson)}`);
+          return { token: null, erro };
+        }
+      }
+
+      this.logger.warn('2captcha reCAPTCHA: timeout — sem resposta em 120s.');
+      return { token: null, erro: 'timeout: sem resposta do 2captcha em 120s' };
+    } catch (err) {
+      this.logger.warn(`2captcha reCAPTCHA erro de rede: ${err}`);
+      return { token: null, erro: `erro de rede: ${err}` };
+    }
+  }
+
+  // Salva um Buffer de PDF em disco e retorna a URL relativa
+  private salvarPdfBuffer(buffer: Buffer, prefixo: string): string {
+    const uploadsDir = join(process.cwd(), 'uploads', 'certidoes');
+    if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
+
+    const filename = `${prefixo}-${Date.now()}.pdf`;
+    const filepath = join(uploadsDir, filename);
+
+    writeFileSync(filepath, buffer);
+
+    return `/uploads/certidoes/${filename}`;
   }
 
   // ---------------------------------------------------------------------------
