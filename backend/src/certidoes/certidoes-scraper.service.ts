@@ -1115,7 +1115,21 @@ export class CertidoesScraperService {
     // de verdade contra esse limite — se estourar, devolve INDISPONIVEL
     // mesmo que o trabalho em segundo plano ainda esteja rodando (o
     // browser é fechado normalmente quando ele terminar, via comBrowser).
-    const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY);
+    // Promise.race propaga rejeição tanto quanto resolução — sem o .catch
+    // abaixo, uma exceção não tratada dentro da tentativa real (ex.: erro
+    // ao abrir a página, fora do try/catch interno) vence a corrida na
+    // hora e derruba a consulta automática inteira (o loop em
+    // certidoes.service.ts não tem try/catch por tipo). Garantir que essa
+    // promise NUNCA rejeita é o que faz o limite de 100s valer de verdade.
+    const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY)
+      .catch((err): ResultadoScraper => {
+        this.logger.warn(`Certidão Municipal Lauro de Freitas: erro não tratado: ${err}`);
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Municipal Lauro de Freitas: erro inesperado: ${err}`,
+        };
+      });
     const limiteDeTempo = new Promise<ResultadoScraper>((resolve) => {
       setTimeout(() => resolve({
         status: 'INDISPONIVEL',
@@ -1134,9 +1148,8 @@ export class CertidoesScraperService {
     SITEKEY: string,
   ): Promise<ResultadoScraper> {
     return this.comBrowser(async (browser) => {
-      const page = await this.novaPage(browser, true);
-
       try {
+        const page = await this.novaPage(browser, true);
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
         const frame = page.frame({ name: 'mainform' });
         if (!frame) {
