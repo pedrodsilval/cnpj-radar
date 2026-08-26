@@ -157,12 +157,22 @@ export class CertidoesService {
       .map((c) => ({ ...c, diasParaVencer: diasParaVencer(c.validade) }));
   }
 
-  async consultarAutomatico(cnpj: string): Promise<Record<string, unknown>> {
-    const empresa = await this.resolverEmpresa(cnpj);
-    const sanitized = sanitizeCnpj(cnpj);
-    const resultados: Record<string, unknown> = {};
-
-    const scrapers: Partial<Record<CertidaoTipo, () => Promise<import('./certidoes-scraper.service').ResultadoScraper>>> = {
+  // Mapa de scrapers por tipo — extraído pra ser reusado tanto pela consulta
+  // automática completa (todos os tipos numa só chamada, usada pelo
+  // consultar-lote) quanto pela consulta por tipo (usada pelo frontend, que
+  // dispara uma chamada HTTP por certidão em vez de uma única requisição de
+  // 15-20 min). Uma requisição única cobrindo os 8 tipos ficava tempo
+  // suficiente pro Render free tier reciclar o container no meio do caminho
+  // (documentado: "Render might restart a Free web service at any time" e
+  // spin-down após 15min sem tráfego novo) — CND Federal e Dívida Ativa
+  // sozinhos já consomem ~12min em 2captcha timeouts (3 tentativas x 120s
+  // cada, problema estrutural de token de hCaptcha expirando, não bug),
+  // derrubando a requisição antes de chegar nos tipos finais sem logar nada.
+  private obterScrapers(
+    sanitized: string,
+    empresa: Empresa,
+  ): Partial<Record<CertidaoTipo, () => Promise<import('./certidoes-scraper.service').ResultadoScraper>>> {
+    return {
       [CertidaoTipo.FGTS_CRF]:           () => this.scraper.consultarFgts(sanitized),
       [CertidaoTipo.CNDT_TRABALHISTA]:    () => this.scraper.consultarCndt(sanitized),
       [CertidaoTipo.CND_FEDERAL]:         () => this.scraper.consultarCndFederal(sanitized),
@@ -172,6 +182,13 @@ export class CertidoesService {
       [CertidaoTipo.MUNICIPAL]:           () => this.scraper.consultarCertidaoMunicipal(sanitized, empresa.uf, empresa.municipio),
       [CertidaoTipo.INSCRICAO_MUNICIPAL]: () => this.scraper.consultarInscricaoMunicipal(sanitized, empresa.uf, empresa.municipio),
     };
+  }
+
+  async consultarAutomatico(cnpj: string): Promise<Record<string, unknown>> {
+    const empresa = await this.resolverEmpresa(cnpj);
+    const sanitized = sanitizeCnpj(cnpj);
+    const resultados: Record<string, unknown> = {};
+    const scrapers = this.obterScrapers(sanitized, empresa);
 
     for (const tipo of TODOS_TIPOS) {
       const scraperFn = scrapers[tipo];
@@ -193,6 +210,36 @@ export class CertidoesService {
     }
 
     return resultados;
+  }
+
+  // Consulta um único tipo de certidão e persiste o resultado — pensado pra
+  // ser chamado uma vez por tipo (o frontend dispara 8 requisições em
+  // sequência em vez de uma só). Cada chamada fica bem abaixo do limite de
+  // 15min de inatividade do Render free, e mesmo que o container recicle
+  // entre uma chamada e outra, cada tipo já foi persistido individualmente —
+  // não perde o que já rodou, só continua de onde parou.
+  async consultarUmTipo(cnpj: string, tipo: CertidaoTipo): Promise<ChecklistItem> {
+    if (!TODOS_TIPOS.includes(tipo)) {
+      throw new NotFoundException('Tipo de certidão inválido.');
+    }
+
+    const empresa = await this.resolverEmpresa(cnpj);
+    const sanitized = sanitizeCnpj(cnpj);
+    const scraperFn = this.obterScrapers(sanitized, empresa)[tipo];
+
+    if (!scraperFn) {
+      await this.upsertCertidao(empresa.id, sanitized, tipo, CertidaoStatus.CONSULTA_MANUAL, null, CertidaoOrigem.AUTOMATICO);
+    } else {
+      const resultado = await scraperFn();
+      const novoStatus = resultado.status === 'REGULAR'     ? CertidaoStatus.REGULAR
+                       : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
+                       : CertidaoStatus.INDISPONIVEL;
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null);
+    }
+
+    const item = (await this.checklist(cnpj)).find((c) => c.tipo === tipo);
+    if (!item) throw new NotFoundException('Tipo de certidão inválido.');
+    return item;
   }
 
   async anexarPdf(

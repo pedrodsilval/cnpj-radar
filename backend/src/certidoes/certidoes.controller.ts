@@ -5,6 +5,7 @@ import { memoryStorage } from 'multer';
 import { extname } from 'path';
 import { CertidoesService } from './certidoes.service';
 import type { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
+import { CertidaoTipo } from '../database/entities/certidao.entity';
 @Controller('certidoes')
 export class CertidoesController {
   constructor(private readonly service: CertidoesService) {}
@@ -48,6 +49,15 @@ export class CertidoesController {
   @Post('consultar/:cnpj')
   consultarAutomatico(@Param('cnpj') cnpj: string) {
     return this.service.consultarAutomatico(cnpj);
+  }
+
+  // Consulta um tipo por vez — usado pelo frontend em vez do endpoint acima
+  // pra não segurar uma única requisição HTTP por 15-20min (o Render free
+  // recicla o container antes de chegar nos últimos tipos, ver
+  // consultarUmTipo em certidoes.service.ts).
+  @Post('consultar/:cnpj/:tipo')
+  consultarUmTipo(@Param('cnpj') cnpj: string, @Param('tipo') tipo: CertidaoTipo) {
+    return this.service.consultarUmTipo(cnpj, tipo);
   }
 
   @Patch(':id/status')

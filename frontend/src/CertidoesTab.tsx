@@ -345,19 +345,29 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
   async function consultarAuto() {
     setConsultandoAuto(true)
     setErroAuto(null)
-    try {
-      const res = await apiFetch(`/certidoes/consultar/${cnpj}`, { method: 'POST' })
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}))
-        setErroAuto((json as { message?: string }).message ?? 'Erro na consulta automática.')
-        return
+    // Consulta um tipo por vez (em vez de uma única requisição de 15-20min)
+    // pra não esbarrar no recycle de container do Render free em requisições
+    // longas — cada tipo já é persistido no backend assim que resolve, então
+    // atualiza a tela progressivamente em vez de um spinner único no final.
+    const tipos = itens.map(i => i.tipo)
+    let falhaDeRede = false
+    for (const tipo of tipos) {
+      try {
+        const res = await apiFetch(`/certidoes/consultar/${cnpj}/${tipo}`, { method: 'POST' })
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          setErroAuto((json as { message?: string }).message ?? `Erro ao consultar ${tipo}.`)
+          continue
+        }
+        const item = (await res.json()) as ChecklistItem
+        setItens(prev => prev.map(i => i.tipo === tipo ? item : i))
+      } catch {
+        falhaDeRede = true
+        setErroAuto('Erro de rede. Tente novamente.')
       }
-      await carregar()
-    } catch {
-      setErroAuto('Erro de rede. Tente novamente.')
-    } finally {
-      setConsultandoAuto(false)
     }
+    if (!falhaDeRede) await carregar()
+    setConsultandoAuto(false)
   }
 
   function onSalvo() {
