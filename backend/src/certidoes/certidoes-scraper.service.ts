@@ -1393,7 +1393,12 @@ export class CertidoesScraperService {
     const SITEKEY = 'f214a120-a07a-4b28-907a-bfa6b96257ae';
     let ultimoErroCaptcha: string | null = null;
 
-    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    // 5 tentativas (não mais 3) — agora que cada uma não perde mais 120s com a
+    // api_captcha local (ver resolver2captchaHcaptcha), o orçamento total fica
+    // parecido com o de antes, mas dá mais chances de pegar uma resolução do
+    // 2captcha rápida o bastante pra vencer a corrida contra a expiração do
+    // token do hCaptcha da Receita.
+    for (let tentativa = 1; tentativa <= 5; tentativa++) {
       try {
         // 1. Resolve hCaptcha via 2captcha
         this.logger.log(`CND Federal tentativa ${tentativa}: resolvendo hCaptcha...`);
@@ -1492,11 +1497,11 @@ export class CertidoesScraperService {
         };
       } catch (err) {
         this.logger.warn(`CND Federal tentativa ${tentativa} erro: ${err}`);
-        if (tentativa === 3) {
+        if (tentativa === 5) {
           return {
             status: 'INDISPONIVEL',
             validade: null,
-            mensagem: `CND Federal: erro após 3 tentativas: ${err}`,
+            mensagem: `CND Federal: erro após 5 tentativas: ${err}`,
           };
         }
       }
@@ -1505,11 +1510,22 @@ export class CertidoesScraperService {
     return {
       status: 'INDISPONIVEL',
       validade: null,
-      mensagem: `CND Federal: hCaptcha não resolvido após 3 tentativas. Último erro: ${ultimoErroCaptcha ?? 'desconhecido'}.`,
+      mensagem: `CND Federal: hCaptcha não resolvido após 5 tentativas. Último erro: ${ultimoErroCaptcha ?? 'desconhecido'}.`,
     };
   }
 
-  // Resolve hCaptcha: tenta api_captcha local primeiro, cai no 2captcha se falhar
+  // Resolve hCaptcha via 2captcha direto — NÃO tenta a api_captcha local antes.
+  // Motivo (achado documentado em docs/pendencias-tecnicas.md): o solver local
+  // (Playwright clicando no checkbox) nunca resolve esse hCaptcha específico da
+  // Receita — sempre estoura o timeout de 120s inteiro antes de cair pro
+  // fallback pago. Isso dobrava o tempo de cada tentativa (até 240s: 120s de
+  // local + até 120s de 2captcha) contra um problema que já é uma corrida
+  // contra o relógio (o token do hCaptcha da Receita expira antes do 2captcha
+  // terminar de resolver — confirmado em log: token obtido aos 116s, rejeitado
+  // no ato seguinte com CaptchaFalhaValidacao). Pular o passo local não resolve
+  // a corrida em si, mas libera esse tempo pra tentar mais vezes no mesmo
+  // orçamento total, aumentando a chance de pegar uma resolução rápida o
+  // suficiente do 2captcha antes do token expirar.
   // Retorna o token quando resolve, ou { erro } com o motivo exato quando falha —
   // sem isso, uma falha de captcha vira sempre "não resolvido" genérico e não dá
   // pra saber se foi chave inválida, saldo zerado, sitekey mudou etc. sem acesso
@@ -1519,13 +1535,6 @@ export class CertidoesScraperService {
     sitekey: string,
     pageUrl: string,
   ): Promise<{ token: string | null; erro: string | null }> {
-    const localToken = await this.captchaClient.resolverHcaptcha(sitekey, pageUrl);
-    if (localToken) {
-      this.logger.log('CND Federal: hCaptcha resolvido localmente (api_captcha).');
-      return { token: localToken, erro: null };
-    }
-
-    this.logger.log('CND Federal: api_captcha não resolveu — acionando 2captcha (pago).');
     try {
       const submitRes = await fetch('https://2captcha.com/in.php', {
         method: 'POST',
