@@ -1061,12 +1061,8 @@ export class CertidoesScraperService {
     const FORM_URL = 'https://servicosweb.sefaz.salvador.ba.gov.br/sistema/certidao_negativa/servicos_certidao_negativa_CNPJ.asp';
 
     return this.comBrowser(async (browser) => {
-      const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
-        locale: 'pt-BR',
-        acceptDownloads: true,
-      });
-      const page = await context.newPage();
+      const page = await this.novaPage(browser, true);
+      const context = page.context();
 
       try {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
