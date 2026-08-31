@@ -47,11 +47,46 @@ export class CertidoesScraperService {
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
       locale: 'pt-BR',
+      viewport: { width: 1920, height: 1080 },
       acceptDownloads,
       extraHTTPHeaders: { 'Accept-Language': 'pt-BR,pt;q=0.9' },
     });
+    // Evasões de detecção de automação — headless Chrome tem várias
+    // pegadas que sites de bot-detection (incluindo hCaptcha) checam antes
+    // de decidir se mostra um desafio ou libera direto: navigator.webdriver
+    // presente, navigator.plugins vazio, window.chrome ausente, WebGL
+    // reportando o renderizador de software (SwiftShader) em vez de uma
+    // GPU real. Nenhuma dessas sozinha "engana" um sistema sofisticado,
+    // mas juntas reduzem os sinais mais óbvios e baratos de checar.
     await context.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => {
+          const fakePlugin = { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' };
+          return Object.assign([fakePlugin], { length: 1, item: () => fakePlugin, namedItem: () => fakePlugin });
+        },
+      });
+
+      const win = window as unknown as { chrome?: unknown };
+      if (!win.chrome) {
+        win.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}), app: {} };
+      }
+
+      const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+      window.navigator.permissions.query = (parameters: PermissionDescriptor) =>
+        parameters.name === 'notifications'
+          ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+          : originalQuery(parameters);
+
+      const getParameter = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function (this: WebGLRenderingContext, parameter: number) {
+        if (parameter === 37445) return 'Intel Inc.'; // UNMASKED_VENDOR_WEBGL
+        if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
+        return getParameter.call(this, parameter);
+      };
     });
     return context.newPage();
   }
