@@ -1480,10 +1480,18 @@ export class CertidoesScraperService {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
 
         await page.locator('#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj').click();
+        await page.waitForTimeout(300); // dá tempo do handler de troca de rádio habilitar o campo
         const campoCnpj = page.locator('#ctl00_ContentPlaceHolderPrincipal_txtNuCnpj');
         await campoCnpj.click();
         await page.keyboard.press('Home');
         await campoCnpj.pressSequentially(cnpjLimpo, { delay: 30 });
+
+        // O campo tem MaskedEditExtender (ASP.NET AJAX Toolkit) — confirma que
+        // o valor ficou no formato mascarado esperado (com pontuação) antes de
+        // seguir. Teste real mostrou "Dígito do CNPJ inválido!" quando o campo
+        // não ficava formatado corretamente no fluxo automatizado.
+        const valorCampo = await campoCnpj.inputValue();
+        this.logger.log(`Inscrição Municipal Salvador: campo CNPJ preenchido como "${valorCampo}"`);
 
         const { token, erro } = await this.resolver2captchaRecaptchaV3(chave2captcha, SITEKEY, FORM_URL, '');
         if (!token) {
