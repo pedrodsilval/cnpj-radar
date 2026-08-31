@@ -1505,8 +1505,13 @@ export class CertidoesScraperService {
           page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {}),
           page.locator('#ctl00_ContentPlaceHolderPrincipal_BtnConsultar0').click(),
         ]);
+        await page.waitForTimeout(1_500); // dá tempo do postback assíncrono (UpdatePanel) renderizar
 
-        const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+        // innerText (não textContent) — textContent inclui o conteúdo bruto de
+        // <script>, que nesse ASP.NET WebForms aparece antes do texto real
+        // renderizado e poluía a extração (confirmado em teste real: primeiro
+        // log só trouxe o boilerplate JS do __doPostBack/ScriptManager).
+        const texto = (await page.evaluate(() => document.body.innerText) ?? '').replace(/\s+/g, ' ');
         this.logger.log(`Inscrição Municipal Salvador: resposta do portal: ${texto.slice(0, 500)}`);
 
         if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|n(ã|a)o cadastrad|cnpj inv(á|a)lido/i.test(texto)) {
