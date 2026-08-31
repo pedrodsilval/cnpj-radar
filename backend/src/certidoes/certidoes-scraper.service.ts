@@ -1527,7 +1527,17 @@ export class CertidoesScraperService {
         // renderizado e poluía a extração (confirmado em teste real: primeiro
         // log só trouxe o boilerplate JS do __doPostBack/ScriptManager).
         const texto = (await page.evaluate(() => document.body.innerText) ?? '').replace(/\s+/g, ' ');
-        this.logger.log(`Inscrição Municipal Salvador: resposta do portal: ${texto.slice(0, 500)}`);
+        // Diagnóstico extra — resposta anterior veio idêntica ao formulário
+        // vazio inicial (sem erro, sem dado), então não dá pra saber se o
+        // postback rodou de verdade ou o token nunca foi enviado. Loga a URL
+        // atual (mudou de página? recarregou?) e o valor do próprio campo do
+        // token depois do clique, pra distinguir as duas hipóteses.
+        const tokenNoCampo = await page.evaluate(() => {
+          const el = document.getElementById('ctl00_ContentPlaceHolderPrincipal_grecaptcharesponse') as HTMLInputElement | null;
+          return el ? el.value.length : -1;
+        });
+        this.logger.log(`Inscrição Municipal Salvador: URL após submit: ${page.url()} | tamanho do token no campo: ${tokenNoCampo}`);
+        this.logger.log(`Inscrição Municipal Salvador: resposta do portal: ${texto.slice(0, 800)}`);
 
         if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|n(ã|a)o cadastrad|cnpj inv(á|a)lido/i.test(texto)) {
           return {
