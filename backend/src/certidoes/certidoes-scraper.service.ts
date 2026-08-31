@@ -1109,18 +1109,26 @@ export class CertidoesScraperService {
     const FORM_URL = 'https://sistemas.sefaz.pmlf.ba.gov.br/webrun/form.jsp?sys=TR2&action=openform&formID=464568210';
     const SITEKEY = '6LdPAGgUAAAAAG8EOv4wan86cAqC37rbEEHmxLDY';
 
-    // Prazo total travado em 100s: uma primeira tentativa real travou
+    // Prazo total travado em 180s: uma primeira tentativa real travou
     // indefinidamente sem nunca retornar (nem sucesso, nem erro logado),
     // deixando a consulta automática inteira pendurada. Corre a tentativa
     // de verdade contra esse limite — se estourar, devolve INDISPONIVEL
     // mesmo que o trabalho em segundo plano ainda esteja rodando (o
     // browser é fechado normalmente quando ele terminar, via comBrowser).
+    // 180s (não mais 100s) porque só o resolver2captchaRecaptcha já pode
+    // levar até 120s no pior caso (24 tentativas x 5s de polling) — com
+    // 100s a corrida quase sempre vencia pelo timeout antes do captcha
+    // ter chance de resolver de verdade (confirmado em teste real: bateu
+    // o timeout aos ~100s sem nenhum log de erro/sucesso do 2captcha).
+    // Cada tipo de certidão agora é uma requisição HTTP isolada (ver
+    // consultarUmTipo em certidoes.service.ts), então sobra bastante
+    // margem sob os limites do Render free pra esse tempo maior.
     // Promise.race propaga rejeição tanto quanto resolução — sem o .catch
     // abaixo, uma exceção não tratada dentro da tentativa real (ex.: erro
     // ao abrir a página, fora do try/catch interno) vence a corrida na
     // hora e derruba a consulta automática inteira (o loop em
     // certidoes.service.ts não tem try/catch por tipo). Garantir que essa
-    // promise NUNCA rejeita é o que faz o limite de 100s valer de verdade.
+    // promise NUNCA rejeita é o que faz o limite de 180s valer de verdade.
     const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY)
       .catch((err): ResultadoScraper => {
         this.logger.warn(`Certidão Municipal Lauro de Freitas: erro não tratado: ${err}`);
@@ -1134,8 +1142,8 @@ export class CertidoesScraperService {
       setTimeout(() => resolve({
         status: 'INDISPONIVEL',
         validade: null,
-        mensagem: 'Certidão Municipal Lauro de Freitas: tempo limite (100s) excedido sem resposta do portal ou do 2captcha.',
-      }), 100_000);
+        mensagem: 'Certidão Municipal Lauro de Freitas: tempo limite (180s) excedido sem resposta do portal ou do 2captcha.',
+      }), 180_000);
     });
 
     return Promise.race([tentativaReal, limiteDeTempo]);
