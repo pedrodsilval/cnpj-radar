@@ -1649,6 +1649,15 @@ export class CertidoesScraperService {
   // Utilitário: extrai data no formato DD/MM/AAAA ou AAAA-MM-DD da página
   // ---------------------------------------------------------------------------
   private extrairData(texto: string): string | null {
+    // Prioriza a data logo após "válid[oa] até" — várias certidões (ex:
+    // Municipal Salvador) têm mais de uma data no texto (emissão + validade),
+    // e pegar a primeira ocorrência de DD/MM/AAAA às cegas pega a data errada
+    // (a de emissão, que vem antes no texto) na maioria dos casos.
+    const matchValidade = texto.match(/v[aá]lid[oa]\s+at[eé]\D{0,20}(\d{2})\/(\d{2})\/(\d{4})/i);
+    if (matchValidade) {
+      const [, d, m, y] = matchValidade;
+      return `${y}-${m}-${d}`;
+    }
     // Tenta DD/MM/AAAA
     const matchBR = texto.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     if (matchBR) {
