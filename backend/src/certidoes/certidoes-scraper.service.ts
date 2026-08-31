@@ -1362,6 +1362,60 @@ export class CertidoesScraperService {
     }
   }
 
+  // reCAPTCHA v3 (invisível, sem desafio, baseado em score) — usado pela
+  // Ficha Cadastral Resumida da SEFAZ Salvador. Confirmado inspecionando o
+  // JS da página: chamada real é `grecaptcha.execute(sitekey, {action: ''})`
+  // — action vazio, então não precisa adivinhar/validar esse parâmetro.
+  private async resolver2captchaRecaptchaV3(
+    apiKey: string,
+    sitekey: string,
+    pageUrl: string,
+    action: string,
+  ): Promise<{ token: string | null; erro: string | null }> {
+    try {
+      const submitRes = await fetch('https://2captcha.com/in.php', {
+        method: 'POST',
+        body: new URLSearchParams({
+          key: apiKey,
+          method: 'userrecaptcha',
+          version: 'v3',
+          action,
+          min_score: '0.3',
+          googlekey: sitekey,
+          pageurl: pageUrl,
+          json: '1',
+        }),
+      });
+      const submitJson = (await submitRes.json()) as { status: number; request: string };
+      if (submitJson.status !== 1) {
+        const erro = `submit: ${submitJson.request}`;
+        this.logger.warn(`2captcha reCAPTCHA v3 submit erro: ${JSON.stringify(submitJson)}`);
+        return { token: null, erro };
+      }
+
+      const captchaId = submitJson.request;
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const resRes = await fetch(
+          `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
+        );
+        const resJson = (await resRes.json()) as { status: number; request: string };
+        if (resJson.status === 1) return { token: resJson.request, erro: null };
+        if (resJson.request !== 'CAPCHA_NOT_READY') {
+          const erro = `resultado: ${resJson.request}`;
+          this.logger.warn(`2captcha reCAPTCHA v3 result erro: ${JSON.stringify(resJson)}`);
+          return { token: null, erro };
+        }
+      }
+
+      this.logger.warn('2captcha reCAPTCHA v3: timeout — sem resposta em 120s.');
+      return { token: null, erro: 'timeout: sem resposta do 2captcha em 120s' };
+    } catch (err) {
+      this.logger.warn(`2captcha reCAPTCHA v3 erro de rede: ${err}`);
+      return { token: null, erro: `erro de rede: ${err}` };
+    }
+  }
+
   // Salva um Buffer de PDF em disco e retorna a URL relativa
   private salvarPdfBuffer(buffer: Buffer, prefixo: string): string {
     const uploadsDir = join(process.cwd(), 'uploads', 'certidoes');
@@ -1381,15 +1435,12 @@ export class CertidoesScraperService {
   // Outros: INDISPONIVEL com instrução
   // ---------------------------------------------------------------------------
   async consultarInscricaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null): Promise<ResultadoScraper> {
+    const cnpjLimpo = cnpj.replace(/\D/g, '');
     const munUpper = (municipio ?? '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const ufUpper  = (uf ?? '').toUpperCase().trim();
 
     if (munUpper.includes('SALVADOR') || (ufUpper === 'BA' && !municipio)) {
-      return {
-        status: 'INDISPONIVEL',
-        validade: null,
-        mensagem: 'Inscrição Municipal (CCM) de Salvador: consulta exige login no portal NFSe da Prefeitura. Acesse: https://nfse.salvador.ba.gov.br',
-      };
+      return this.consultarInscricaoMunicipalSalvador(cnpjLimpo);
     }
 
     const nomeMun = municipio ?? `município (${ufUpper || 'desconhecido'})`;
@@ -1398,6 +1449,115 @@ export class CertidoesScraperService {
       validade: null,
       mensagem: `Inscrição Municipal (IM/CCM) de ${nomeMun}: consulte diretamente na Secretaria de Finanças ou portal de ISS do município.`,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inscrição Municipal (CGA) — Salvador, "Ficha Cadastral Resumida"
+  // Portal: AlvaraCgaEmissaoFichaResumidaFrm.aspx (achado em 31/08/2026 — o
+  // link "utilize a ferramenta de consulta com seu CNPJ" mencionado em fontes
+  // externas se refere a essa página). Aceita consulta por CNPJ OU CGA
+  // (CGA = nome que Salvador usa pro que a gente chama de Inscrição
+  // Municipal). Protegida por reCAPTCHA v3 invisível (sitekey
+  // 6LezQsYUAAAAADGi0SuYM_oefBW6Roqnm04-Phmp, action vazio — confirmado lendo
+  // o `grecaptcha.execute()` real da página).
+  // ---------------------------------------------------------------------------
+  private async consultarInscricaoMunicipalSalvador(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const chave2captcha = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!chave2captcha) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Inscrição Municipal Salvador: o portal usa reCAPTCHA. Cadastre uma chave 2captcha em Configurações → Credenciais para habilitar a automação.',
+      };
+    }
+
+    const FORM_URL = 'https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx';
+    const SITEKEY = '6LezQsYUAAAAADGi0SuYM_oefBW6Roqnm04-Phmp';
+
+    return this.comBrowser(async (browser) => {
+      try {
+        const page = await this.novaPage(browser, true);
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.locator('#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj').click();
+        const campoCnpj = page.locator('#ctl00_ContentPlaceHolderPrincipal_txtNuCnpj');
+        await campoCnpj.click();
+        await page.keyboard.press('Home');
+        await campoCnpj.pressSequentially(cnpjLimpo, { delay: 30 });
+
+        const { token, erro } = await this.resolver2captchaRecaptchaV3(chave2captcha, SITEKEY, FORM_URL, '');
+        if (!token) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Inscrição Municipal Salvador: reCAPTCHA não resolvido (${erro}).`,
+          };
+        }
+        await page.evaluate((tok) => {
+          const el = document.getElementById('ctl00_ContentPlaceHolderPrincipal_grecaptcharesponse') as HTMLInputElement | null;
+          if (el) {
+            el.value = tok;
+            el.dispatchEvent(new Event('change'));
+          }
+        }, token);
+
+        await Promise.all([
+          page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {}),
+          page.locator('#ctl00_ContentPlaceHolderPrincipal_BtnConsultar0').click(),
+        ]);
+
+        const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+        this.logger.log(`Inscrição Municipal Salvador: resposta do portal: ${texto.slice(0, 500)}`);
+
+        if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|n(ã|a)o cadastrad|cnpj inv(á|a)lido/i.test(texto)) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: 'Inscrição Municipal Salvador: CNPJ não encontrado no Cadastro Geral de Atividades (CGA).',
+          };
+        }
+
+        const matchCga = texto.match(/CGA\s*[:\-]?\s*(\d[\d.]{3,})/i);
+        if (!matchCga) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Inscrição Municipal Salvador: não foi possível localizar o número do CGA na resposta. Resposta do site: ${texto.slice(0, 300)}`,
+          };
+        }
+
+        const numeroCga = matchCga[1].replace(/\./g, '');
+        const urlArquivo = await this.gerarPdfFichaCadastral(page, cnpjLimpo);
+
+        return {
+          status: 'REGULAR',
+          validade: null,
+          mensagem: `Inscrição Municipal (CGA) ativa em Salvador. Número: ${numeroCga}.`,
+          urlArquivo,
+        };
+      } catch (err) {
+        this.logger.warn(`Inscrição Municipal Salvador erro: ${err}`);
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Erro ao consultar Inscrição Municipal Salvador: ${err}`,
+        };
+      }
+    });
+  }
+
+  private async gerarPdfFichaCadastral(page: Page, cnpjLimpo: string): Promise<string | null> {
+    try {
+      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
+      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+      const filename = `im-salvador-${cnpjLimpo}-${Date.now()}.pdf`;
+      const filepath = join(uploadDir, filename);
+      await page.pdf({ path: filepath, format: 'A4', printBackground: true });
+      return `/uploads/certidoes/${filename}`;
+    } catch (err) {
+      this.logger.warn(`Inscrição Municipal Salvador: não foi possível gerar PDF: ${err}`);
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------
