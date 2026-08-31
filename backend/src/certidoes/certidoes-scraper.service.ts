@@ -1066,7 +1066,14 @@ export class CertidoesScraperService {
 
       try {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
-        await page.locator('#txtCNPJ').fill(cnpjLimpo);
+        // #divCGA (o campo de código de verificação) começa com display:none e só
+        // aparece via handler de keyup no #txtCNPJ — .fill() seta o valor direto
+        // sem disparar eventos de teclado de verdade, então o campo nunca aparece
+        // e o .fill() seguinte trava esperando um elemento que nunca fica visível.
+        // pressSequentially digita caractere por caractere de verdade (keydown/
+        // keyup/input), disparando o mesmo handler que um usuário real dispararia.
+        await page.locator('#txtCNPJ').pressSequentially(cnpjLimpo, { delay: 30 });
+        await page.locator('#divCGA').waitFor({ state: 'visible', timeout: 10_000 });
 
         // Campo de "código de verificação" — decorativo, o valor certo já está no hidden.
         const codigoReal = await page.locator('#textfield22').inputValue();
