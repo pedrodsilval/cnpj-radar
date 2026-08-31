@@ -1161,6 +1161,7 @@ export class CertidoesScraperService {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
         const frame = page.frame({ name: 'mainform' });
         if (!frame) {
+          this.logger.warn('Certidão Municipal Lauro de Freitas: iframe "mainform" ausente — formulário não carregou.');
           return {
             status: 'INDISPONIVEL',
             validade: null,
@@ -1180,12 +1181,14 @@ export class CertidoesScraperService {
         // Resolve reCAPTCHA v2 via 2captcha e injeta o token no textarea padrão.
         const { token, erro } = await this.resolver2captchaRecaptcha(chave2captcha, SITEKEY, FORM_URL);
         if (!token) {
+          this.logger.warn(`Certidão Municipal Lauro de Freitas: reCAPTCHA não resolvido (${erro}).`);
           return {
             status: 'INDISPONIVEL',
             validade: null,
             mensagem: `Certidão Municipal Lauro de Freitas: reCAPTCHA não resolvido (${erro}).`,
           };
         }
+        this.logger.log('Certidão Municipal Lauro de Freitas: reCAPTCHA resolvido, enviando formulário...');
         await frame.evaluate((tok) => {
           const ta = document.getElementById('g-recaptcha-response') as HTMLTextAreaElement | null;
           if (ta) {
@@ -1233,6 +1236,7 @@ export class CertidoesScraperService {
         const pdfBuffer = capturedPdf ?? downloadBuffer;
         if (pdfBuffer) {
           const urlArquivo = this.salvarPdfBuffer(pdfBuffer, `municipal-laurodefreitas-${cnpjLimpo}`);
+          this.logger.log('Certidão Municipal Lauro de Freitas: PDF capturado, emitida com sucesso.');
           return {
             status: 'REGULAR',
             validade: null,
@@ -1243,6 +1247,7 @@ export class CertidoesScraperService {
 
         const texto = (await paginaResultado.textContent('body').catch(() => '')) ?? '';
         const textoLimpo = texto.replace(/\s+/g, ' ').trim();
+        this.logger.warn(`Certidão Municipal Lauro de Freitas: nenhum PDF capturado. Texto da página de resultado: ${textoLimpo.slice(0, 500)}`);
 
         if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|inscri(ç|c)(ã|a)o inv(á|a)lida|n(ã|a)o cadastrad/i.test(textoLimpo)) {
           return {
