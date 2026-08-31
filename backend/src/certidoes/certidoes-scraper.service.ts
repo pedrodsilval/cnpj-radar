@@ -1066,18 +1066,18 @@ export class CertidoesScraperService {
 
       try {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
-        // #divCGA (o campo de código de verificação) começa com display:none e só
-        // aparece via handler de keyup no #txtCNPJ — .fill() seta o valor direto
-        // sem disparar eventos de teclado de verdade, então o campo nunca aparece
-        // e o .fill() seguinte trava esperando um elemento que nunca fica visível.
-        // pressSequentially digita caractere por caractere de verdade (keydown/
-        // keyup/input), disparando o mesmo handler que um usuário real dispararia.
-        await page.locator('#txtCNPJ').pressSequentially(cnpjLimpo, { delay: 30 });
-        await page.locator('#divCGA').waitFor({ state: 'visible', timeout: 10_000 });
+        await page.locator('#txtCNPJ').fill(cnpjLimpo);
 
-        // Campo de "código de verificação" — decorativo, o valor certo já está no hidden.
+        // O campo visível de "código de verificação" NÃO é #txtCGA — esse id
+        // existe no HTML mas fica dentro de #divCGA (display:none, rotulado
+        // "CPF", provavelmente resquício de uma variante da página pra CPF) e
+        // nunca é exibido no fluxo de CNPJ. Confirmado inspecionando o DOM ao
+        // vivo: o campo que aparece de verdade na tela é um <input> sem id,
+        // name="form". Usar #txtCGA travava esperando visibilidade que nunca
+        // vinha. O valor certo já vem exposto no campo hidden #textfield22
+        // (decorativo — não é um captcha de verdade pra resolver).
         const codigoReal = await page.locator('#textfield22').inputValue();
-        await page.locator('#txtCGA').fill(codigoReal);
+        await page.locator('input[name="form"]').fill(codigoReal);
 
         const [novaPage] = await Promise.all([
           context.waitForEvent('page', { timeout: 20_000 }),
