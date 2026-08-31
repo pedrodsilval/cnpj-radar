@@ -1482,7 +1482,14 @@ export class CertidoesScraperService {
         await page.locator('#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj').click();
         await page.waitForTimeout(300); // dá tempo do handler de troca de rádio habilitar o campo
         const campoCnpj = page.locator('#ctl00_ContentPlaceHolderPrincipal_txtNuCnpj');
+        // Limpar antes de digitar é necessário — confirmado manualmente: sem
+        // isso o MaskedEditExtender (ASP.NET AJAX Toolkit) mantém posição de
+        // cursor interna inconsistente e a digitação cai no meio/fim da
+        // máscara em vez de do início (reproduzido em teste real: campo saiu
+        // como "__.___.__./_303-27" em vez do CNPJ completo).
         await campoCnpj.click();
+        await page.keyboard.press('Control+A');
+        await page.keyboard.press('Delete');
         await page.keyboard.press('Home');
         await campoCnpj.pressSequentially(cnpjLimpo, { delay: 30 });
 
