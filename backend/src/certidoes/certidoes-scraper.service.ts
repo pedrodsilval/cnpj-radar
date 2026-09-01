@@ -1477,6 +1477,19 @@ export class CertidoesScraperService {
     return this.comBrowser(async (browser) => {
       try {
         const page = await this.novaPage(browser, true);
+
+        // A resposta pode vir como alert() nativo do navegador (comum em
+        // ASP.NET WebForms pra mensagens tipo "CNPJ não encontrado") — sem
+        // handler, o Playwright descarta o diálogo sozinho e a mensagem se
+        // perde (confirmado em teste real: URL igual + token presente após
+        // o submit, mas o texto da página voltou idêntico ao estado inicial
+        // — sinal de que algo interceptou a resposta antes de eu ler).
+        let mensagemAlerta: string | null = null;
+        page.on('dialog', (dialog) => {
+          mensagemAlerta = dialog.message();
+          dialog.dismiss().catch(() => {});
+        });
+
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
 
         await page.locator('#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj').click();
@@ -1536,8 +1549,16 @@ export class CertidoesScraperService {
           const el = document.getElementById('ctl00_ContentPlaceHolderPrincipal_grecaptcharesponse') as HTMLInputElement | null;
           return el ? el.value.length : -1;
         });
-        this.logger.log(`Inscrição Municipal Salvador: URL após submit: ${page.url()} | tamanho do token no campo: ${tokenNoCampo}`);
+        this.logger.log(`Inscrição Municipal Salvador: URL após submit: ${page.url()} | tamanho do token no campo: ${tokenNoCampo} | alerta JS: ${mensagemAlerta ?? '(nenhum)'}`);
         this.logger.log(`Inscrição Municipal Salvador: resposta do portal: ${texto.slice(0, 800)}`);
+
+        if (mensagemAlerta) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Inscrição Municipal Salvador: ${mensagemAlerta}`,
+          };
+        }
 
         if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|n(ã|a)o cadastrad|cnpj inv(á|a)lido/i.test(texto)) {
           return {
