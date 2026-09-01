@@ -1213,7 +1213,16 @@ export class CertidoesScraperService {
         await tipoCertidaoCombo.locator('xpath=../button[contains(@class, "input-group-append")]').click();
         await frame.getByText('46 - Certidão Negativa - Mobiliário', { exact: true }).click({ timeout: 10_000 });
 
-        // Inscrição: melhor esforço com o CNPJ — ver nota acima sobre a incerteza.
+        // Inscrição: CONFIRMADO em 01/09/2026 — o campo exige o CGA (Cadastro
+        // Geral de Atividades), não o CNPJ nem a Inscrição Imobiliária. Testado
+        // ao vivo com CGA real (empresa MULTILOC, CNPJ 41.530.027/0001-73):
+        // reCAPTCHA resolvido, site encontrou o cadastro e respondeu com uma
+        // mensagem específica de negócio ("Existe(m) lançamento(s) em aberto:
+        // TFF - 2026"), não mais a mensagem genérica de "atualizar cadastro"
+        // que aparecia com CNPJ/Inscrição Imobiliária. Sem campo próprio pro
+        // CGA no cadastro de empresas ainda, então seguimos com o CNPJ como
+        // melhor esforço — vai continuar retornando INDISPONIVEL até essa
+        // empresa (ou outras) terem o CGA cadastrado.
         await frame.locator('#WFRInput772762').fill(cnpjLimpo);
 
         // Resolve reCAPTCHA v2 via 2captcha e injeta o token no textarea padrão.
