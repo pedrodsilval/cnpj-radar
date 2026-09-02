@@ -61,7 +61,8 @@ async function resolver(session, imageSrc) {
 
 async function main() {
   const count = parseInt(process.argv[2] || '5', 10);
-  console.log(`Testando solver ONNX local contra ${count} captchas reais do CNDT/TST...`);
+  const delayMs = parseInt(process.argv[3] || '0', 10);
+  console.log(`Testando solver ONNX local contra ${count} captchas reais do CNDT/TST (atraso proposital antes do submit: ${delayMs}ms)...`);
 
   const session = await ort.InferenceSession.create(MODEL_PATH, { executionProviders: ['cpu'] });
   console.log('Modelo ONNX carregado.\n');
@@ -97,6 +98,11 @@ async function main() {
         console.log(`  [${i + 1}/${count}] modelo nao decodificou 6 chars (${token}), pulando`);
         continue;
       }
+
+      // Atraso proposital ENTRE resolver (resposta ja definida, correta pra
+      // essa imagem) e submeter -- testa se o token do captcha expira no
+      // servidor com o tempo, independente da resposta estar certa.
+      if (delayMs > 0) await page.waitForTimeout(delayMs);
 
       await page.locator('#idCampoResposta').fill(token.toLowerCase());
       await page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click();

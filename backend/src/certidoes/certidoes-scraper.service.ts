@@ -322,13 +322,22 @@ export class CertidoesScraperService {
 
           this.logger.log(`CNDT 2captcha tentativa ${tentativa}: resposta "${respostaCaptcha}"`);
           await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
-          // Instrumentacao temporaria: medir se a demora entre capturar a
-          // imagem e submeter a resposta (rede ate a api_captcha + volta)
-          // e grande o suficiente pro captcha do TST expirar no servidor
-          // antes da resposta chegar -- hipotese levantada apos observar
-          // acuracia bem pior aqui do que num teste direto (sem rede) contra
-          // o mesmo modelo.
-          this.logger.log(`CNDT tentativa ${tentativa}: ${Date.now() - capturaMs}ms entre captura da imagem e submissao da resposta.`);
+          // Instrumentacao: medir a demora entre capturar a imagem e
+          // submeter a resposta, E checar se a imagem do captcha na tela
+          // ainda e a MESMA que foi capturada e resolvida -- se o site
+          // trocar o captcha em segundo plano (renovacao automatica) antes
+          // do submit, estariamos respondendo certo pra uma imagem que ja
+          // nao e mais a valida, o que pareceria "resposta errada" sem ser
+          // erro do modelo. Comparacao feita por tamanho + fim da string
+          // (suficiente pra detectar troca, sem logar a imagem inteira).
+          const imageSrcNoSubmit = await page.locator('img#idImgBase64').getAttribute('src').catch(() => null);
+          const imagemTrocou = imageSrcNoSubmit !== null && imageSrcNoSubmit !== imageSrc;
+          this.logger.log(
+            `CNDT tentativa ${tentativa}: ${Date.now() - capturaMs}ms entre captura da imagem e submissao da resposta. ` +
+            `imagem_trocou_antes_do_submit=${imagemTrocou} ` +
+            `(len_capturada=${imageSrc.length} fim_capturada="${imageSrc.slice(-15)}" | ` +
+            `len_no_submit=${imageSrcNoSubmit?.length ?? 'null'} fim_no_submit="${imageSrcNoSubmit?.slice(-15) ?? 'null'}")`,
+          );
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
@@ -339,7 +348,17 @@ export class CertidoesScraperService {
 
           if (resultado.status === 'INDISPONIVEL' && resultado.mensagem.includes('CAPTCHA')) {
             ultimoErroCaptcha = `site rejeitou a resposta "${respostaCaptcha}" (resolvida pelo 2captcha)`;
-            this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado pelo site (resposta "${respostaCaptcha}").`);
+            // Diagnostico: texto exato devolvido pelo site (nao so a
+            // mensagem generica que a gente gera) + URL apos o submit
+            // (revela redirect por sessao expirada) + se o campo de CNPJ
+            // ainda tem o valor preenchido (revela reset de formulario).
+            const urlAtual = page.url();
+            const cnpjAindaPreenchido = await page.locator('#gerarCertidaoForm\\:cpfCnpj').inputValue().catch(() => '(erro ao ler)');
+            this.logger.warn(
+              `CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado pelo site (resposta "${respostaCaptcha}"). ` +
+              `url_apos_submit="${urlAtual}" cnpj_ainda_preenchido="${cnpjAindaPreenchido}" ` +
+              `texto_completo_resposta="${texto.slice(0, 500)}"`,
+            );
             continue;
           }
 
