@@ -304,6 +304,15 @@ export class CertidoesScraperService {
             timeout: 30_000,
           });
 
+          // Diagnostico: IP de saida no momento da carga da pagina (quando o
+          // tokenDesafio e emitido via loadCaptcha()). Comparado com o IP
+          // logo antes do submit -- se forem diferentes (comum em pools de
+          // NAT de provedores de nuvem), o servidor pode rejeitar a resposta
+          // por inconsistencia de sessao, independente do texto estar certo.
+          const ipInicial = await page.evaluate(() =>
+            fetch('https://api.ipify.org?format=json').then((r) => r.json()).then((d) => d.ip).catch((e) => `erro:${e}`),
+          );
+
           await page.locator('#gerarCertidaoForm\\:cpfCnpj').fill(cnpjLimpo);
 
           const imageSrc = await page.locator('img#idImgBase64').getAttribute('src') ?? '';
@@ -332,9 +341,12 @@ export class CertidoesScraperService {
           // (suficiente pra detectar troca, sem logar a imagem inteira).
           const imageSrcNoSubmit = await page.locator('img#idImgBase64').getAttribute('src').catch(() => null);
           const imagemTrocou = imageSrcNoSubmit !== null && imageSrcNoSubmit !== imageSrc;
+          const ipFinal = await page.evaluate(() =>
+            fetch('https://api.ipify.org?format=json').then((r) => r.json()).then((d) => d.ip).catch((e) => `erro:${e}`),
+          );
           this.logger.log(
             `CNDT tentativa ${tentativa}: ${Date.now() - capturaMs}ms entre captura da imagem e submissao da resposta. ` +
-            `imagem_trocou_antes_do_submit=${imagemTrocou} ` +
+            `imagem_trocou_antes_do_submit=${imagemTrocou} ip_inicial=${ipInicial} ip_final=${ipFinal} ip_mudou=${ipInicial !== ipFinal} ` +
             `(len_capturada=${imageSrc.length} fim_capturada="${imageSrc.slice(-15)}" | ` +
             `len_no_submit=${imageSrcNoSubmit?.length ?? 'null'} fim_no_submit="${imageSrcNoSubmit?.slice(-15) ?? 'null'}")`,
           );
