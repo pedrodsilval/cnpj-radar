@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { OnnxCaptchaSolverService } from './onnx-captcha-solver.service';
 
 // Sem CAPTCHA_API_URL configurada, não há para onde chamar — o default
 // (localhost:8000) só faz sentido em dev local, nunca em produção (aponta
@@ -7,6 +8,10 @@ import { Injectable, Logger } from '@nestjs/common';
 // sucesso, em cada uma das 3 tentativas de cada certidão que usa captcha.
 const CAPTCHA_API_URL = process.env.CAPTCHA_API_URL ?? null;
 const CAPTCHA_API_KEY = process.env.CAPTCHA_API_KEY ?? 'dev-key';
+
+// Mesmo limiar da api_captcha (ML_CONFIDENCE_THRESHOLD): abaixo disso não
+// confia no palpite local, cai pro próximo solver.
+const ONNX_CONFIDENCE_THRESHOLD = 0.9;
 
 interface CaptchaResponse {
   token: string;
@@ -17,21 +22,31 @@ interface CaptchaResponse {
 }
 
 /**
- * Cliente para a api_captcha local.
- * Tenta resolver localmente antes de acionar o 2captcha pago.
- * Se a api_captcha estiver offline, retorna null silenciosamente
- * para que o fallback pago seja acionado normalmente.
+ * Cliente para resolução de CAPTCHA de imagem: tenta o modelo ONNX local
+ * (mesmo processo, sem rede — resolve em milissegundos) antes de cair pra
+ * api_captcha via HTTP e depois pro 2captcha pago. A chamada em rede pra
+ * api_captcha, mesmo bem-sucedida, mede 4-8s de captura-até-submissão em
+ * produção (rede + cold start do Render) — tempo suficiente pro captcha do
+ * CNDT/TST expirar no servidor antes da resposta chegar, mesmo estando
+ * certa. O caminho ONNX local elimina essa janela quase por completo.
  */
 @Injectable()
 export class CaptchaClientService {
   private readonly logger = new Logger(CaptchaClientService.name);
 
+  constructor(private readonly onnxSolver: OnnxCaptchaSolverService) {}
+
   async resolverImagem(imageBase64: string): Promise<string | null> {
+    const local = await this.onnxSolver.resolverImagem(imageBase64);
+    if (local && local.confidence >= ONNX_CONFIDENCE_THRESHOLD) {
+      this.logger.log(`ONNX local: resposta "${local.token}" confiança=${local.confidence.toFixed(2)} (sem rede).`);
+      return local.token;
+    }
+    if (local) {
+      this.logger.log(`ONNX local: confiança baixa (${local.confidence.toFixed(2)}) — tentando api_captcha/2captcha.`);
+    }
+
     const base64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    this.logger.log(
-      `resolverImagem: prefixo="${imageBase64.slice(0, 30)}" len_original=${imageBase64.length} ` +
-      `len_apos_strip=${base64.length} inicio="${base64.slice(0, 20)}" fim="${base64.slice(-20)}"`,
-    );
     return this.chamar({ type: 'image', image_b64: base64 });
   }
 
