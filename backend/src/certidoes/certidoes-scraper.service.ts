@@ -1033,7 +1033,7 @@ export class CertidoesScraperService {
   // um sistema diferente do de certidão de regularidade fiscal).
   // Outros municípios: INDISPONIVEL com instrução para prefeitura
   // ---------------------------------------------------------------------------
-  async consultarCertidaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null): Promise<ResultadoScraper> {
+  async consultarCertidaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null, cga?: string | null): Promise<ResultadoScraper> {
     const cnpjLimpo = cnpj.replace(/\D/g, '');
     const munUpper = (municipio ?? '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const ufUpper  = (uf ?? '').toUpperCase().trim();
@@ -1043,7 +1043,7 @@ export class CertidoesScraperService {
     }
 
     if (munUpper.includes('LAURO DE FREITAS')) {
-      return this.consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo);
+      return this.consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, cga);
     }
 
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
@@ -1206,7 +1206,7 @@ export class CertidoesScraperService {
   // INDISPONIVEL abaixo. Ajustar conforme o que os logs de produção
   // mostrarem na primeira consulta real.
   // ---------------------------------------------------------------------------
-  private async consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo: string): Promise<ResultadoScraper> {
+  private async consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo: string, cga?: string | null): Promise<ResultadoScraper> {
     const chave2captcha = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
     if (!chave2captcha) {
       return {
@@ -1240,7 +1240,7 @@ export class CertidoesScraperService {
     // hora e derruba a consulta automática inteira (o loop em
     // certidoes.service.ts não tem try/catch por tipo). Garantir que essa
     // promise NUNCA rejeita é o que faz o limite de 180s valer de verdade.
-    const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY)
+    const tentativaReal = this.tentarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, chave2captcha, FORM_URL, SITEKEY, cga)
       .catch((err): ResultadoScraper => {
         this.logger.warn(`Certidão Municipal Lauro de Freitas: erro não tratado: ${err}`);
         return {
@@ -1265,6 +1265,7 @@ export class CertidoesScraperService {
     chave2captcha: string,
     FORM_URL: string,
     SITEKEY: string,
+    cga?: string | null,
   ): Promise<ResultadoScraper> {
     return this.comBrowser(async (browser) => {
       try {
@@ -1280,11 +1281,13 @@ export class CertidoesScraperService {
           };
         }
 
-        // Tipo de Certidão: combo "lookup" — clicar no campo em si não abre o
-        // popup, é preciso clicar no botão-gatilho (ícone) ao lado dele.
-        const tipoCertidaoCombo = frame.locator('#WFRInput772767');
-        await tipoCertidaoCombo.locator('xpath=../button[contains(@class, "input-group-append")]').click();
-        await frame.getByText('46 - Certidão Negativa - Mobiliário', { exact: true }).click({ timeout: 10_000 });
+        if (!cga) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: 'Certidão Municipal Lauro de Freitas: o portal exige o CGA (Cadastro Geral de Atividades), não o CNPJ. Cadastre o CGA da empresa na aba Clientes para habilitar a emissão automática.',
+          };
+        }
 
         // Inscrição: CONFIRMADO em 01/09/2026 — o campo exige o CGA (Cadastro
         // Geral de Atividades), não o CNPJ nem a Inscrição Imobiliária. Testado
@@ -1292,11 +1295,17 @@ export class CertidoesScraperService {
         // reCAPTCHA resolvido, site encontrou o cadastro e respondeu com uma
         // mensagem específica de negócio ("Existe(m) lançamento(s) em aberto:
         // TFF - 2026"), não mais a mensagem genérica de "atualizar cadastro"
-        // que aparecia com CNPJ/Inscrição Imobiliária. Sem campo próprio pro
-        // CGA no cadastro de empresas ainda, então seguimos com o CNPJ como
-        // melhor esforço — vai continuar retornando INDISPONIVEL até essa
-        // empresa (ou outras) terem o CGA cadastrado.
-        await frame.locator('#WFRInput772762').fill(cnpjLimpo);
+        // que aparecia com CNPJ/Inscrição Imobiliária. O CGA agora vem do
+        // cadastro manual da empresa (aba Clientes) — sem ele, nem tentamos
+        // submeter o formulário (ver checagem acima).
+
+        // Tipo de Certidão: combo "lookup" — clicar no campo em si não abre o
+        // popup, é preciso clicar no botão-gatilho (ícone) ao lado dele.
+        const tipoCertidaoCombo = frame.locator('#WFRInput772767');
+        await tipoCertidaoCombo.locator('xpath=../button[contains(@class, "input-group-append")]').click();
+        await frame.getByText('46 - Certidão Negativa - Mobiliário', { exact: true }).click({ timeout: 10_000 });
+
+        await frame.locator('#WFRInput772762').fill(cga);
 
         // Resolve reCAPTCHA v2 via 2captcha e injeta o token no textarea padrão.
         const { token, erro } = await this.resolver2captchaRecaptcha(chave2captcha, SITEKEY, FORM_URL);
@@ -1373,7 +1382,18 @@ export class CertidoesScraperService {
           return {
             status: 'INDISPONIVEL',
             validade: null,
-            mensagem: `Certidão Municipal Lauro de Freitas: CNPJ não localizado no Cadastro Mobiliário (pode exigir Inscrição Mobiliária específica em vez do CNPJ). Resposta do site: ${textoLimpo.slice(0, 300)}`,
+            mensagem: `Certidão Municipal Lauro de Freitas: CGA "${cga}" não localizado no Cadastro Mobiliário. Confirme se o CGA cadastrado na aba Clientes está correto. Resposta do site: ${textoLimpo.slice(0, 300)}`,
+          };
+        }
+
+        // "Existe(m) lançamento(s) em aberto" — CGA encontrado, mas com débito
+        // pendente (confirmado em teste real em 01/09/2026). Isso é uma
+        // resposta de negócio, não uma falha nossa — reporta IRREGULAR.
+        if (/lan(ç|c)amento\(?s?\)?\s+em\s+aberto/i.test(textoLimpo)) {
+          return {
+            status: 'IRREGULAR',
+            validade: null,
+            mensagem: `Certidão Municipal Lauro de Freitas: existem débitos/lançamentos em aberto no Cadastro Mobiliário. Resposta do site: ${textoLimpo.slice(0, 300)}`,
           };
         }
 
@@ -1516,13 +1536,34 @@ export class CertidoesScraperService {
   // Salvador: NFSe exige login — retorna INDISPONIVEL com link direto
   // Outros: INDISPONIVEL com instrução
   // ---------------------------------------------------------------------------
-  async consultarInscricaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null): Promise<ResultadoScraper> {
+  async consultarInscricaoMunicipal(cnpj: string, uf?: string | null, municipio?: string | null, cga?: string | null): Promise<ResultadoScraper> {
     const cnpjLimpo = cnpj.replace(/\D/g, '');
     const munUpper = (municipio ?? '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
     const ufUpper  = (uf ?? '').toUpperCase().trim();
 
     if (munUpper.includes('SALVADOR') || (ufUpper === 'BA' && !municipio)) {
       return this.consultarInscricaoMunicipalSalvador(cnpjLimpo);
+    }
+
+    // Lauro de Freitas: não existe consulta pública de CNPJ->CGA no portal da
+    // SEFAZ-PMLF (confirmado em 02/09/2026 — o "Portal do Contribuinte" exige
+    // login, e o site oficial da Secretaria só fala em ter o CGA em mãos, sem
+    // nenhuma busca por CNPJ). Sem esse número armazenado manualmente, não tem
+    // como automatizar. Com ele, o próprio cadastro já É a resposta — sem
+    // custo de reCAPTCHA/2captcha pra só confirmar um número que já temos.
+    if (munUpper.includes('LAURO DE FREITAS')) {
+      if (!cga) {
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: 'Inscrição Municipal (CGA) de Lauro de Freitas: não existe consulta pública por CNPJ nesse portal. Cadastre o CGA da empresa na aba Clientes.',
+        };
+      }
+      return {
+        status: 'REGULAR',
+        validade: null,
+        mensagem: `Inscrição Municipal (CGA) de Lauro de Freitas: ${cga}.`,
+      };
     }
 
     const nomeMun = municipio ?? `município (${ufUpper || 'desconhecido'})`;

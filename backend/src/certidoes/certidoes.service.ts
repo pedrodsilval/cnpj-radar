@@ -179,8 +179,8 @@ export class CertidoesService {
       [CertidaoTipo.DIVIDA_ATIVA]:        () => this.scraper.consultarCndFederal(sanitized),
       [CertidaoTipo.INSCRICAO_ESTADUAL]:  () => this.scraper.consultarInscricaoEstadual(sanitized, empresa.uf),
       [CertidaoTipo.ESTADUAL]:            () => this.scraper.consultarCndEstadual(sanitized, empresa.uf),
-      [CertidaoTipo.MUNICIPAL]:           () => this.scraper.consultarCertidaoMunicipal(sanitized, empresa.uf, empresa.municipio),
-      [CertidaoTipo.INSCRICAO_MUNICIPAL]: () => this.scraper.consultarInscricaoMunicipal(sanitized, empresa.uf, empresa.municipio),
+      [CertidaoTipo.MUNICIPAL]:           () => this.scraper.consultarCertidaoMunicipal(sanitized, empresa.uf, empresa.municipio, empresa.cga),
+      [CertidaoTipo.INSCRICAO_MUNICIPAL]: () => this.scraper.consultarInscricaoMunicipal(sanitized, empresa.uf, empresa.municipio, empresa.cga),
     };
   }
 
