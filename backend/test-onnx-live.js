@@ -71,7 +71,10 @@ async function main() {
   // pra isolar se o problema em producao e o fingerprint do browser ou o
   // IP de origem (Render). Rodando isto da minha maquina (IP diferente),
   // se ainda assim funcionar bem, isola a causa pro IP, nao pro fingerprint.
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
     locale: 'pt-BR',

@@ -355,8 +355,17 @@ export class CertidoesScraperService {
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
           ]);
 
-          const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+          // BUG REAL encontrado nesta sessao: textContent('body') inclui o
+          // texto de dentro de <script> tags, e o JS da propria pagina do
+          // TST tem "idUrlServletSoundCaptcha" (nome de elemento) -- ou seja
+          // t.includes('captcha') em parseCndt() batia SEMPRE, em qualquer
+          // carga de pagina, classificando toda resposta como "CAPTCHA
+          // rejeitado" independente do resultado real. innerText respeita
+          // renderizacao e exclui <script>/<style>, como os scripts de
+          // teste desta sessao ja usavam corretamente.
+          const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
           const resultado = this.parseCndt(texto);
+          this.logger.log(`CNDT tentativa ${tentativa}: status=${resultado.status} mensagem="${resultado.mensagem}" texto="${texto.slice(0, 300)}"`);
 
           if (resultado.status === 'INDISPONIVEL' && resultado.mensagem.includes('CAPTCHA')) {
             ultimoErroCaptcha = `site rejeitou a resposta "${respostaCaptcha}" (resolvida pelo 2captcha)`;
@@ -435,8 +444,17 @@ export class CertidoesScraperService {
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
           ]);
 
-          const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+          // BUG REAL encontrado nesta sessao: textContent('body') inclui o
+          // texto de dentro de <script> tags, e o JS da propria pagina do
+          // TST tem "idUrlServletSoundCaptcha" (nome de elemento) -- ou seja
+          // t.includes('captcha') em parseCndt() batia SEMPRE, em qualquer
+          // carga de pagina, classificando toda resposta como "CAPTCHA
+          // rejeitado" independente do resultado real. innerText respeita
+          // renderizacao e exclui <script>/<style>, como os scripts de
+          // teste desta sessao ja usavam corretamente.
+          const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
           const resultado = this.parseCndt(texto);
+          this.logger.log(`CNDT tentativa ${tentativa}: status=${resultado.status} mensagem="${resultado.mensagem}" texto="${texto.slice(0, 300)}"`);
 
           if (resultado.status === 'INDISPONIVEL' && resultado.mensagem.includes('CAPTCHA')) {
             this.logger.warn(`CNDT Whisper tentativa ${tentativa}: CAPTCHA rejeitado ("${respostaCaptcha}").`);
@@ -644,7 +662,17 @@ export class CertidoesScraperService {
   private parseCndt(texto: string): ResultadoScraper {
     const t = texto.toLowerCase();
 
-    if (t.includes('negativa de débitos trabalhistas') || t.includes('não constam')) {
+    // "certidão emitida com sucesso" e a mensagem real de sucesso vista ao
+    // vivo (innerText) apos o captcha ser aceito -- nao necessariamente vem
+    // junto com "negativa de débitos trabalhistas" no texto renderizado
+    // nesse momento. Confirmado nesta sessao: resposta do modelo aceita
+    // (confianca 0.94) gerou exatamente esse texto, que caia no fallback
+    // "resposta não reconhecida" antes desta correcao.
+    if (
+      t.includes('negativa de débitos trabalhistas') ||
+      t.includes('não constam') ||
+      t.includes('certidão emitida com sucesso')
+    ) {
       const validade = this.extrairData(texto);
       return { status: 'REGULAR', validade, mensagem: 'Certidão Negativa de Débitos Trabalhistas (CNDT) emitida.' };
     }
@@ -657,7 +685,13 @@ export class CertidoesScraperService {
       return { status: 'INDISPONIVEL', validade: null, mensagem: 'CNPJ não encontrado no sistema CNDT.' };
     }
 
-    if (t.includes('captcha') || t.includes('caracteres') && t.includes('incorret')) {
+    // "código de validação inválido" e a mensagem real e visivel do site
+    // pra captcha errado -- nao contem a palavra "captcha" nem "incorret".
+    // Confirmado ao vivo nesta sessao (medicao real: 27 de 29 aceitas usando
+    // esse criterio, contra falso-negativo constante antes da correcao do
+    // textContent->innerText, que sempre batia em "captcha" via texto de
+    // <script> presente em toda carga de pagina).
+    if (t.includes('captcha') || t.includes('código de validação inválido') || (t.includes('caracteres') && t.includes('incorret'))) {
       return { status: 'INDISPONIVEL', validade: null, mensagem: 'CNDT: CAPTCHA inválido.' };
     }
 
