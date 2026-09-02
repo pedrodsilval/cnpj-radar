@@ -15,6 +15,7 @@ export default defineConfig({
       '/dashboard':   'http://localhost:3000',
       '/tarefas':     'http://localhost:3000',
       '/workflow-runs': 'http://localhost:3000',
+      '/empresas':    'http://localhost:3000',
     },
   },
   test: {

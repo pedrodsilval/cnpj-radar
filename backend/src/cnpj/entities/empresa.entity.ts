@@ -81,6 +81,18 @@ export class Empresa {
   @Column({ name: 'data_inicio_atividade', nullable: true, type: 'varchar', length: 10 })
   dataInicioAtividade: string | null;
 
+  // Campos manuais de cadastro — não vêm da Receita Federal, preenchidos uma
+  // vez por empresa via aba "Clientes". upsertEmpresa() (cnpj.service.ts) não
+  // atribui estes campos, então uma nova consulta de CNPJ não os apaga.
+  @Column({ name: 'inscricao_mobiliaria', nullable: true, type: 'varchar' })
+  inscricaoMobiliaria: string | null;
+
+  @Column({ nullable: true, type: 'varchar' })
+  cga: string | null;
+
+  @Column({ name: 'inscricao_estadual', nullable: true, type: 'varchar' })
+  inscricaoEstadual: string | null;
+
   @CreateDateColumn({ name: 'criado_em' })
   criadoEm: Date;
 

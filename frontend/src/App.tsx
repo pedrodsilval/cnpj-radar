@@ -8,6 +8,7 @@ import { UsuariosTab } from './UsuariosTab'
 import { DashboardTab } from './DashboardTab'
 import { TarefasTab } from './TarefasTab'
 import { RelatoriosTab } from './RelatoriosTab'
+import { ClientesTab } from './ClientesTab'
 import { estaLogado, getUsuario, limparSessao, apiFetch, type UsuarioLogado } from './auth'
 
 // --- Types ---
@@ -81,7 +82,7 @@ interface PropostaData {
 }
 
 type Tab = 'cadastro' | 'scores' | 'socios' | 'certidoes'
-type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas' | 'relatorios'
+type Vista = 'cnpj' | 'alertas' | 'painel' | 'config' | 'usuarios' | 'dashboard' | 'tarefas' | 'relatorios' | 'clientes'
 type StatusLead = 'idle' | 'salvando' | 'salvo' | 'erro'
 type StatusAtualizacao = 'idle' | 'salvando' | 'erro'
 
@@ -710,7 +711,7 @@ function App() {
           <NavItem label="Relatórios"     active={vista === 'relatorios'}  onClick={() => setVista('relatorios')} />
           <NavItem label="Painel de Mercado" active={vista === 'painel'} onClick={() => setVista('painel')} />
           <NavItem label="Leads"         disabled />
-          <NavItem label="Clientes"      disabled />
+          <NavItem label="Clientes"      active={vista === 'clientes'}    onClick={() => setVista('clientes')} />
         </nav>
 
         <div className="p-3 border-t border-surface/10 space-y-0.5">
@@ -753,6 +754,7 @@ function App() {
              vista === 'dashboard'   ? 'Dashboard'            :
              vista === 'tarefas'     ? 'Tarefas'              :
              vista === 'relatorios'  ? 'Relatórios'           :
+             vista === 'clientes'    ? 'Clientes'             :
                                        'Consulta de CNPJ'}
           </h1>
         </header>
@@ -766,6 +768,7 @@ function App() {
           {/* Vista Tarefas */}
           {vista === 'tarefas'    && <TarefasTab />}
           {vista === 'relatorios' && <RelatoriosTab />}
+          {vista === 'clientes'   && <ClientesTab />}
 
           {/* Vista Configurações */}
           {vista === 'config' && <CredenciaisTab />}

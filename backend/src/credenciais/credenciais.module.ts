@@ -9,6 +9,6 @@ import { CredenciaisController } from './credenciais.controller';
   imports: [TypeOrmModule.forFeature([Credencial])],
   controllers: [CredenciaisController],
   providers: [CredenciaisCriptService, CredenciaisService],
-  exports: [CredenciaisService],
+  exports: [CredenciaisService, CredenciaisCriptService],
 })
 export class CredenciaisModule {}
