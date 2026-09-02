@@ -28,6 +28,10 @@ export class CaptchaClientService {
 
   async resolverImagem(imageBase64: string): Promise<string | null> {
     const base64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    this.logger.log(
+      `resolverImagem: prefixo="${imageBase64.slice(0, 30)}" len_original=${imageBase64.length} ` +
+      `len_apos_strip=${base64.length} inicio="${base64.slice(0, 20)}" fim="${base64.slice(-20)}"`,
+    );
     return this.chamar({ type: 'image', image_b64: base64 });
   }
 
