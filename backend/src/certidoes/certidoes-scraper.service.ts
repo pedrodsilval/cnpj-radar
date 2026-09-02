@@ -119,7 +119,7 @@ export class CertidoesScraperService {
           // O snippet vai direto na mensagem retornada — é o único jeito de inspecionar
           // isso sem acesso aos logs do Render.
           const titulo = await page.title().catch(() => '(sem título)');
-          const corpo = ((await page.textContent('body').catch(() => '')) ?? '')
+          const corpo = ((await page.innerText('body').catch(() => '')) ?? '')
             .replace(/\s+/g, ' ')
             .trim()
             .slice(0, 400);
@@ -137,7 +137,7 @@ export class CertidoesScraperService {
           page.locator('[id="mainForm:btnConsultar"]').dispatchEvent('click'),
         ]);
 
-        const conteudo = (await page.textContent('body')) ?? '';
+        const conteudo = (await page.innerText('body')) ?? '';
         const resultado = this.parseFgts(conteudo);
 
         // Se regular, baixa o PDF do CRF (para salvar e extrair data de validade real)
@@ -171,7 +171,7 @@ export class CertidoesScraperService {
 
       if ((await linkCrf.count()) === 0) {
         this.logger.warn('CRF: link do certificado não encontrado na página.');
-        const texto = await page.textContent('body') ?? '';
+        const texto = await page.innerText('body') ?? '';
         return { validade: this.extrairValidadeCrf(texto), urlArquivo: null };
       }
 
@@ -181,7 +181,7 @@ export class CertidoesScraperService {
       ]);
 
       // Extrai validade do texto renderizado pelo AJAX
-      const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ').trim();
+      const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ').trim();
       const validade = this.extrairValidadeCrf(texto);
 
       // Esconde botões de navegação do portal antes de gerar o PDF
@@ -212,7 +212,7 @@ export class CertidoesScraperService {
     } catch (err) {
       this.logger.warn(`CRF: não foi possível gerar o certificado: ${err}`);
       try {
-        const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+        const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
         return { validade: this.extrairValidadeCrf(texto), urlArquivo: null };
       } catch {
         return { validade: null, urlArquivo: null };
@@ -813,7 +813,7 @@ export class CertidoesScraperService {
         ]);
 
         const paginaUrl = page.url();
-        const texto = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+        const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
 
         // Redirecionado para consulta_vazia = CNPJ não cadastrado no ICMS-BA
         if (paginaUrl.includes('consulta_vazia')) {
@@ -979,7 +979,7 @@ export class CertidoesScraperService {
 
       if (!relUrl) {
         // Sem window.open = erro modal (CNPJ não encontrado no ICMS-BA ou há débitos)
-        const corpo = (await page.textContent('body') ?? '').replace(/\s+/g, ' ');
+        const corpo = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
         const temErro = /erro|não encontrado|nao encontrado|débito|debito|irregular/i.test(corpo);
         this.logger.warn(`CND Estadual BA: sem window.open para ${cnpjLimpo}. temErro=${temErro}`);
         return {
@@ -1165,7 +1165,7 @@ export class CertidoesScraperService {
         const filepath = join(uploadDir, filename);
         await novaPage.pdf({ path: filepath, format: 'A4', printBackground: true });
 
-        const texto = (await novaPage.textContent('body') ?? '').replace(/\s+/g, ' ');
+        const texto = (await novaPage.innerText('body') ?? '').replace(/\s+/g, ' ');
         const validade = this.extrairData(texto);
 
         return {
@@ -1365,7 +1365,7 @@ export class CertidoesScraperService {
           };
         }
 
-        const texto = (await paginaResultado.textContent('body').catch(() => '')) ?? '';
+        const texto = (await paginaResultado.innerText('body').catch(() => '')) ?? '';
         const textoLimpo = texto.replace(/\s+/g, ' ').trim();
         this.logger.warn(`Certidão Municipal Lauro de Freitas: nenhum PDF capturado. Texto da página de resultado: ${textoLimpo.slice(0, 500)}`);
 
