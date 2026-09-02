@@ -50,7 +50,8 @@ export class CaptchaClientService {
       });
 
       if (!res.ok) {
-        this.logger.warn(`api_captcha retornou ${res.status} — usando fallback pago.`);
+        const corpo = await res.text().catch(() => '');
+        this.logger.warn(`api_captcha retornou ${res.status} — usando fallback pago. Corpo: ${corpo}`);
         return null;
       }
 
