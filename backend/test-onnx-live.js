@@ -67,10 +67,40 @@ async function main() {
   const session = await ort.InferenceSession.create(MODEL_PATH, { executionProviders: ['cpu'] });
   console.log('Modelo ONNX carregado.\n');
 
+  // Mesmo contexto + evasoes de novaPage() em certidoes-scraper.service.ts,
+  // pra isolar se o problema em producao e o fingerprint do browser ou o
+  // IP de origem (Render). Rodando isto da minha maquina (IP diferente),
+  // se ainda assim funcionar bem, isola a causa pro IP, nao pro fingerprint.
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
     locale: 'pt-BR',
+    viewport: { width: 1920, height: 1080 },
+    extraHTTPHeaders: { 'Accept-Language': 'pt-BR,pt;q=0.9' },
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US', 'en'] });
+    Object.defineProperty(navigator, 'plugins', {
+      get: () => {
+        const fakePlugin = { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' };
+        return Object.assign([fakePlugin], { length: 1, item: () => fakePlugin, namedItem: () => fakePlugin });
+      },
+    });
+    if (!window.chrome) {
+      window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}), app: {} };
+    }
+    const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
+    window.navigator.permissions.query = (parameters) =>
+      parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function (parameter) {
+      if (parameter === 37445) return 'Intel Inc.';
+      if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+      return getParameter.call(this, parameter);
+    };
   });
   const page = await context.newPage();
 
