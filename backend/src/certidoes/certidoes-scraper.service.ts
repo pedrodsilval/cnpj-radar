@@ -311,6 +311,7 @@ export class CertidoesScraperService {
             this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: imagem CAPTCHA não encontrada.`);
             continue;
           }
+          const capturaMs = Date.now();
 
           const { token: respostaCaptcha, erro: erroCaptcha } = await this.resolver2captchaImagem(imageSrc, apiKey);
           if (!respostaCaptcha) {
@@ -321,6 +322,13 @@ export class CertidoesScraperService {
 
           this.logger.log(`CNDT 2captcha tentativa ${tentativa}: resposta "${respostaCaptcha}"`);
           await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
+          // Instrumentacao temporaria: medir se a demora entre capturar a
+          // imagem e submeter a resposta (rede ate a api_captcha + volta)
+          // e grande o suficiente pro captcha do TST expirar no servidor
+          // antes da resposta chegar -- hipotese levantada apos observar
+          // acuracia bem pior aqui do que num teste direto (sem rede) contra
+          // o mesmo modelo.
+          this.logger.log(`CNDT tentativa ${tentativa}: ${Date.now() - capturaMs}ms entre captura da imagem e submissao da resposta.`);
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
             page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
