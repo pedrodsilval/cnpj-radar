@@ -1747,6 +1747,16 @@ export class CertidoesScraperService {
   // ---------------------------------------------------------------------------
   async consultarCndFederal(cnpj: string): Promise<ResultadoScraper> {
     const cnpjLimpo = cnpj.replace(/\D/g, '');
+
+    // Ver comentário grande abaixo: em produção (Render) isso SEMPRE falha
+    // (PAT do hCaptcha exige atestação de hardware que Chrome headless não
+    // produz), então só vale a pena tentar via browser local quando essa
+    // env var está setada manualmente (nunca em produção — headed exige
+    // ~700MB de RAM, muito acima do free tier do Render).
+    if (process.env.USAR_CND_FEDERAL_LOCAL === 'true') {
+      return this.consultarCndFederalHeadedLocal(cnpjLimpo);
+    }
+
     const chave2captcha = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
 
     if (!chave2captcha) {
@@ -1762,31 +1772,45 @@ export class CertidoesScraperService {
   }
 
   // ---------------------------------------------------------------------------
-  // Por que não vale investir num solver local pra esse hCaptcha (investigado
-  // em 02-03/09/2026, ver api_captcha/diagnostico_hcaptcha_receita.py):
+  // hCaptcha da Receita Federal — por que produção usa 2captcha e não um
+  // solver local (investigado em 02-03/09/2026, ver
+  // api_captcha/diagnostico_hcaptcha_receita.py e scripts irmãos no mesmo
+  // diretório):
   //
   // Esse hCaptcha usa Private Access Tokens (PAT — padrão Privacy Pass,
-  // Apple/Cloudflare), não um desafio de imagem. Confirmado direto na
-  // requisição real de rede: o header X-Captcha-Token SEMPRE chega populado
-  // com um JWT de milhares de caracteres (prefixo "P1_...") — o hCaptcha
-  // gera o token normalmente — mas a Receita rejeita com "023 -
-  // CaptchaFalhaValidacao" toda vez, porque o token PAT exige atestação
-  // criptográfica de hardware real (tipo Secure Enclave) que um Chromium
-  // automatizado não tem como produzir. Não é um problema de "resolver a
-  // imagem certo" — não existe imagem nenhuma; é a prova de dispositivo
-  // real que falha.
+  // Apple/Cloudflare), não um desafio de imagem. O header X-Captcha-Token
+  // SEMPRE chega populado com um JWT real (prefixo "P1_...") — o hCaptcha
+  // gera o token normalmente — mas em Chrome automatizado ele é rejeitado
+  // com "023 - CaptchaFalhaValidacao", porque falta a atestação de
+  // hardware que o PAT exige.
   //
-  // Testado e descartado, todos com o MESMO resultado (token gerado, 023
-  // rejeitado): evasões completas de stealth (mesmas de novaPage()),
-  // movimento de mouse realista simulando interação humana, e troca de
-  // user-agent pra Firefox (a decisão de emitir PAT não muda com o UA).
-  // Isso também explica por que o próprio 2captcha luta tanto com esse
-  // hCaptcha específico (timeouts e ERROR_CAPTCHA_UNSOLVABLE observados em
-  // produção) — provavelmente esbarram na mesma atestação.
+  // Isolado por eliminação (8 combinações testadas): NÃO é sobre qual
+  // binário (Chromium do Playwright e Chrome real se comportam igual) nem
+  // sobre stealth/UA/mouse humano (tudo isso testado, sem efeito). As DUAS
+  // condições que precisam estar presentes JUNTAS pra passar:
+  //   1. headless: false (headless real tem pipeline de GPU/mídia
+  //      reduzido — confirmado: --disable-gpu sozinho já quebra o PAT
+  //      mesmo com headless:false, então é a aceleração de GPU real que
+  //      importa, não "ter uma janela")
+  //   2. launchPersistentContext (perfil de verdade em disco) em vez do
+  //      newContext() efêmero em memória — não precisa de "aquecimento",
+  //      funciona de primeira com perfil recém-criado
+  // Confirmado 4/4 vezes com essas duas condições juntas; qualquer uma
+  // faltando = sempre falha.
   //
-  // Não reabrir essa investigação sem evidência nova de que a Receita
-  // mudou a config desse sitekey (ex.: pat=off na URL do iframe de
-  // desafio, capturável no mesmo script de diagnóstico).
+  // Por que produção não usa isso: exige ~700MB de RAM só pro Chrome
+  // (medido com medir_memoria_cnd_federal.py) — o free tier do Render tem
+  // 512MB no total. Tentativas de cortar memória sem quebrar o PAT
+  // (extensões/background/cache desligados) só chegam a ~690MB — as
+  // alavancas que realmente cortariam memória (desligar GPU, bloquear
+  // requisições de rede) são exatamente as que quebram a atestação. Não
+  // dá pra caber no free tier sem um upgrade de plano ou um VPS.
+  //
+  // Solução atual: consultarCndFederalHeadedLocal() abaixo implementa o
+  // fluxo real (headed + perfil persistente), só habilitado via env var
+  // USAR_CND_FEDERAL_LOCAL=true — pra rodar manualmente do computador
+  // local (RAM não é o gargalo lá) sempre que precisar processar CND
+  // Federal/Dívida Ativa, enquanto produção continua no 2captcha.
   // ---------------------------------------------------------------------------
   private async consultarCndFederalCom2captcha(
     cnpjLimpo: string,
@@ -1918,6 +1942,132 @@ export class CertidoesScraperService {
       validade: null,
       mensagem: `CND Federal: hCaptcha não resolvido após 5 tentativas. Último erro: ${ultimoErroCaptcha ?? 'desconhecido'}.`,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // CND Federal — fluxo real via browser headed + perfil persistente. Só
+  // habilitado com USAR_CND_FEDERAL_LOCAL=true (ver comentário grande logo
+  // acima de consultarCndFederalCom2captcha pra entender por quê). Dirige
+  // o formulário de verdade (não a API REST direto) porque é a página real
+  // que decide se emite PAT — chamar a API isolada como
+  // consultarCndFederalCom2captcha faz não helps aqui.
+  // ---------------------------------------------------------------------------
+  private async consultarCndFederalHeadedLocal(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const PAGE_URL = 'https://servicos.receitafederal.gov.br/servico/certidoes/';
+    const perfilDir = join(process.cwd(), '.chrome-profile-cnd-federal');
+
+    const context = await chromium.launchPersistentContext(perfilDir, {
+      headless: false,
+      viewport: { width: 1280, height: 800 },
+      locale: 'pt-BR',
+      acceptDownloads: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-sync',
+        '--disable-translate',
+        '--disable-default-apps',
+        '--no-first-run',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=Translate,OptimizationHints,MediaRouter',
+        '--renderer-process-limit=2',
+        '--js-flags=--max-old-space-size=256',
+        '--disk-cache-size=1',
+        '--mute-audio',
+      ],
+    });
+
+    try {
+      const page = context.pages()[0] ?? (await context.newPage());
+
+      let capturedPdf: Buffer | null = null;
+      const onResponse = (response: import('playwright').Response) => {
+        if (capturedPdf) return;
+        const ct = response.headers()['content-type'] ?? '';
+        if (ct.includes('application/pdf')) {
+          response.body().then((b) => { capturedPdf = b; }).catch(() => {});
+        }
+      };
+      context.on('response', onResponse);
+      context.on('page', (p) => p.on('response', onResponse));
+      page.on('download', (download) => {
+        download.createReadStream().then((stream) => {
+          if (!stream) return;
+          const chunks: Buffer[] = [];
+          stream.on('data', (c) => chunks.push(c));
+          stream.on('end', () => { capturedPdf = Buffer.concat(chunks); });
+        }).catch(() => {});
+      });
+
+      await page.goto(PAGE_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+      try {
+        await page.getByRole('button', { name: 'Aceitar' }).click({ timeout: 3_000 });
+      } catch { /* banner pode não aparecer se o perfil já aceitou antes */ }
+
+      await page.getByText('Pessoa Jurídica', { exact: true }).click({ timeout: 8_000 });
+      await page.waitForTimeout(800);
+
+      const campoCnpj = page.locator('input[name="niContribuinte"]');
+      await campoCnpj.click();
+      await page.keyboard.press('Control+A');
+      await page.keyboard.press('Delete');
+      await campoCnpj.pressSequentially(cnpjLimpo, { delay: 80 });
+      await page.keyboard.press('Tab');
+      await page.waitForTimeout(600);
+
+      await page.getByRole('button', { name: 'Emitir Certidão' }).click({ timeout: 8_000 });
+      await page.waitForTimeout(3_000);
+
+      // Se já existe certidão válida, o site pergunta antes de emitir uma
+      // nova — confirma a emissão pra sempre ter o PDF/validade atuais.
+      const modalCertidaoValida = page.getByText('Certidão Válida Encontrada');
+      if (await modalCertidaoValida.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await page.getByRole('button', { name: 'Emitir Nova Certidão' }).click({ timeout: 8_000 });
+        await page.waitForTimeout(3_000);
+      }
+
+      await page.waitForTimeout(2_000);
+      const texto = ((await page.locator('body').innerText().catch(() => '')) ?? '').trim();
+      const textoLower = texto.toLowerCase();
+
+      if (textoLower.includes('emitida com sucesso')) {
+        const validade = this.extrairData(texto);
+        return {
+          status: 'REGULAR',
+          validade,
+          mensagem: 'Certidão de Débitos Relativos a Créditos Tributários Federais e à Dívida Ativa da União emitida.',
+          urlArquivo: capturedPdf ? this.salvarPdfBuffer(capturedPdf, `cnd-federal-${cnpjLimpo}`) : undefined,
+        };
+      }
+
+      if (/n(ã|a)o tem direito|existem pend(ê|e)ncias|d(é|e)bitos? pendentes/i.test(texto)) {
+        return {
+          status: 'IRREGULAR',
+          validade: null,
+          mensagem: `CND Federal: empresa não tem direito à certidão negativa. Resposta do site: ${texto.slice(0, 300)}`,
+        };
+      }
+
+      // Não reconhecemos a resposta como sucesso nem como rejeição clara —
+      // não arriscamos declarar REGULAR só com base em texto de página pra
+      // um documento fiscal. Devolve o texto pra diagnóstico.
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: `CND Federal: não foi possível confirmar a emissão automaticamente. Resposta do site: ${texto.slice(0, 400)}`,
+      };
+    } catch (err) {
+      this.logger.warn(`CND Federal (headed local) erro: ${err}`);
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar CND Federal (local): ${err}` };
+    } finally {
+      await context.close();
+    }
   }
 
   // Resolve hCaptcha via 2captcha direto — NÃO tenta a api_captcha local antes.
