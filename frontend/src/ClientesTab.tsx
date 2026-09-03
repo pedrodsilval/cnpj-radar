@@ -146,7 +146,7 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
           <div>
             <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">CNPJ *</label>
             <div className="flex gap-2">
-              <input type="text" value={cnpj} onChange={e => setCnpj(e.target.value)} disabled={editando} placeholder="00.000.000/0000-00"
+              <input type="text" value={cnpj} onChange={e => setCnpj(e.target.value)} disabled={editando} placeholder="00.000.000/0000-00" autoComplete="off"
                 className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white disabled:bg-gray-50 disabled:text-gray-400"/>
               {!editando && (
                 <button onClick={buscarDadosReceita} disabled={buscando}
@@ -158,24 +158,24 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
           </div>
           <div>
             <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Razão social *</label>
-            <input type="text" value={razaoSocial} onChange={e => setRazaoSocial(e.target.value)}
+            <input type="text" value={razaoSocial} onChange={e => setRazaoSocial(e.target.value)} autoComplete="off"
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Inscrição Mobiliária</label>
-              <input type="text" value={inscricaoMobiliaria} onChange={e => setInscricaoMobiliaria(e.target.value)} placeholder="Lauro de Freitas"
+              <input type="text" value={inscricaoMobiliaria} onChange={e => setInscricaoMobiliaria(e.target.value)} placeholder="Lauro de Freitas" autoComplete="off"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
             </div>
             <div>
               <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">CGA</label>
-              <input type="text" value={cga} onChange={e => setCga(e.target.value)} placeholder="Salvador"
+              <input type="text" value={cga} onChange={e => setCga(e.target.value)} placeholder="Salvador" autoComplete="off"
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
             </div>
           </div>
           <div>
             <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-1">Inscrição Estadual</label>
-            <input type="text" value={inscricaoEstadual} onChange={e => setInscricaoEstadual(e.target.value)}
+            <input type="text" value={inscricaoEstadual} onChange={e => setInscricaoEstadual(e.target.value)} autoComplete="off"
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
           </div>
           {erro && <p className="text-xs text-danger font-display font-bold">⚠ {erro}</p>}
@@ -216,10 +216,10 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
                     <option value="A3">A3</option>
                   </select>
                 </div>
-                <input type="password" value={senha} onChange={e => setSenha(e.target.value)} placeholder="Senha do certificado"
+                <input type="password" value={senha} onChange={e => setSenha(e.target.value)} placeholder="Senha do certificado" autoComplete="new-password"
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
                 <div className="grid grid-cols-2 gap-2">
-                  <input type="text" value={titular} onChange={e => setTitular(e.target.value)} placeholder="Titular"
+                  <input type="text" value={titular} onChange={e => setTitular(e.target.value)} placeholder="Titular" autoComplete="off"
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
                   <input type="date" value={validade} onChange={e => setValidade(e.target.value)}
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
@@ -254,18 +254,29 @@ export function ClientesTab() {
   const [busca, setBusca] = useState('')
   const [modal, setModal] = useState<{ aberto: boolean; empresa?: Empresa; certificado?: CertificadoPublico | null }>({ aberto: false })
 
-  const carregar = useCallback(async () => {
+  const carregar = useCallback(async (signal?: AbortSignal) => {
     setCarregando(true); setErro(null)
     try {
       const q = busca ? `?busca=${encodeURIComponent(busca)}` : ''
-      const res = await apiFetch(`/empresas${q}`)
+      const res = await apiFetch(`/empresas${q}`, { signal })
       if (!res.ok) { setErro('Não foi possível carregar as empresas.'); return }
       setEmpresas(await res.json() as Empresa[])
-    } catch { setErro('Erro de rede.') }
-    finally { setCarregando(false) }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') setErro('Erro de rede.')
+      return
+    }
+    finally { if (!signal?.aborted) setCarregando(false) }
   }, [busca])
 
-  useEffect(() => { void carregar() }, [carregar])
+  // AbortController evita que uma resposta antiga (ex: busca="l") sobrescreva
+  // o resultado de uma busca mais recente (ex: busca="lyras") que chegou
+  // primeiro — sem isso, digitar rápido podia deixar a lista com resultados
+  // desatualizados até a próxima mudança na busca.
+  useEffect(() => {
+    const controller = new AbortController()
+    void carregar(controller.signal)
+    return () => controller.abort()
+  }, [carregar])
 
   async function abrirEdicao(empresa: Empresa) {
     const res = await apiFetch(`/empresas/${empresa.id}`)
@@ -292,7 +303,7 @@ export function ClientesTab() {
             <p className="text-gray-400 font-body text-sm mt-0.5">Cadastro de empresas — inscrições municipais/estaduais e certificado digital.</p>
           </div>
           <div className="flex items-center gap-2">
-            <input type="text" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por CNPJ ou razão social"
+            <input type="text" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por CNPJ ou razão social" autoComplete="off"
               className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
             <button onClick={() => setModal({ aberto: true })}
               className="bg-primary text-white font-display font-bold text-sm px-4 py-1.5 rounded-xl hover:bg-depth transition-colors whitespace-nowrap">
