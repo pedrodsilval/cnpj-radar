@@ -294,6 +294,23 @@ export class CertidoesScraperService {
     return this.comBrowser(async (browser) => {
       const page = await this.novaPage(browser, true);
 
+      // O botão de emissão tem o rótulo "Emitir Certidão, o PDF da certidão
+      // será baixado" -- a certidão real vem como download nativo do
+      // navegador, não como conteúdo renderizado na página. Achado real
+      // (03/09/2026): o PDF que gerávamos antes com page.pdf() capturava só
+      // a mensagem de confirmação transitória ("Certidão EMITIDA com
+      // sucesso"), sem CNPJ/validade/código de verificação -- não era a
+      // certidão oficial. Captura o download de verdade aqui.
+      let downloadBuffer: Buffer | null = null;
+      page.on('download', (download) => {
+        download.createReadStream().then((stream) => {
+          if (!stream) return;
+          const chunks: Buffer[] = [];
+          stream.on('data', (c) => chunks.push(c));
+          stream.on('end', () => { downloadBuffer = Buffer.concat(chunks); });
+        }).catch(() => {});
+      });
+
       for (let tentativa = 1; tentativa <= 3; tentativa++) {
         try {
           await page.goto('https://cndt-certidao.tst.jus.br/gerarCertidao.faces', {
@@ -384,7 +401,8 @@ export class CertidoesScraperService {
           this.contribuirDataset(imageSrc, respostaCaptcha).catch(() => {});
 
           if (resultado.status === 'REGULAR' || resultado.status === 'IRREGULAR') {
-            resultado.urlArquivo = await this.gerarPdfCndt(page, cnpjLimpo);
+            await page.waitForTimeout(1_500); // dá tempo do stream do download terminar
+            resultado.urlArquivo = await this.gerarPdfCndt(downloadBuffer, cnpjLimpo);
           }
 
           return resultado;
@@ -408,6 +426,18 @@ export class CertidoesScraperService {
   private async consultarCndtComWhisper(cnpjLimpo: string): Promise<ResultadoScraper> {
     return this.comBrowser(async (browser) => {
       const page = await this.novaPage(browser, true);
+
+      // Ver comentário em consultarCndtCom2captcha: a certidão real vem
+      // como download nativo do navegador, não como conteúdo renderizado.
+      let downloadBuffer: Buffer | null = null;
+      page.on('download', (download) => {
+        download.createReadStream().then((stream) => {
+          if (!stream) return;
+          const chunks: Buffer[] = [];
+          stream.on('data', (c) => chunks.push(c));
+          stream.on('end', () => { downloadBuffer = Buffer.concat(chunks); });
+        }).catch(() => {});
+      });
 
       for (let tentativa = 1; tentativa <= 3; tentativa++) {
         try {
@@ -459,7 +489,8 @@ export class CertidoesScraperService {
           }
 
           if (resultado.status === 'REGULAR' || resultado.status === 'IRREGULAR') {
-            resultado.urlArquivo = await this.gerarPdfCndt(page, cnpjLimpo);
+            await page.waitForTimeout(1_500); // dá tempo do stream do download terminar
+            resultado.urlArquivo = await this.gerarPdfCndt(downloadBuffer, cnpjLimpo);
           }
 
           return resultado;
@@ -695,24 +726,15 @@ export class CertidoesScraperService {
     return { status: 'INDISPONIVEL', validade: null, mensagem: 'CNDT TST: resposta não reconhecida.' };
   }
 
-  private async gerarPdfCndt(page: import('playwright').Page, cnpjLimpo: string): Promise<string | null> {
+  private async gerarPdfCndt(downloadBuffer: Buffer | null, cnpjLimpo: string): Promise<string | null> {
     try {
-      await page.addStyleTag({
-        content: `
-          input[type=submit], input[type=button], button,
-          .botao, [id*="btn"], nav, header, footer
-          { display: none !important; }
-        `,
-      });
+      if (!downloadBuffer) {
+        this.logger.warn('CNDT: nenhum download capturado — não é a certidão oficial pra arriscar gerar um PDF substituto.');
+        return null;
+      }
+      const urlArquivo = await this.storage.uploadPdf(downloadBuffer, `cndt-${cnpjLimpo}`);
 
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
-      });
-      const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `cndt-${cnpjLimpo}`);
-
-      this.logger.log(`CNDT: PDF gerado`);
+      this.logger.log(`CNDT: PDF (download real) salvo`);
       return urlArquivo;
     } catch (err) {
       this.logger.warn(`CNDT: não foi possível gerar PDF: ${err}`);
