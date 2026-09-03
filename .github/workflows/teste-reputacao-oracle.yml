@@ -1,0 +1,32 @@
+name: Teste diagnóstico — reputação de IP da Oracle Cloud São Paulo (infra da VPS HostGator)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reputação via ip-api.com
+        run: |
+          for ip in 129.148.16.1 132.226.160.1 64.181.160.1; do
+            echo "=== $ip ==="
+            curl -s "http://ip-api.com/json/$ip?fields=status,message,country,regionName,city,isp,org,as,asname,mobile,proxy,hosting,query"
+            echo
+          done
+
+      - name: Reputação via AbuseIPDB (página pública)
+        run: |
+          for ip in 129.148.16.1 132.226.160.1; do
+            echo "=== $ip ==="
+            curl -s "https://www.abuseipdb.com/check/$ip" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" | grep -iE "abuseConfidenceScore|usageType|isp\"|countryCode" | head -20
+            echo
+          done
+
+      - name: Reputação via Scamalytics (página pública)
+        run: |
+          for ip in 129.148.16.1 132.226.160.1; do
+            echo "=== $ip ==="
+            curl -sL "https://scamalytics.com/ip/$ip" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" | grep -iE "score|fraud risk|proxy|vpn|hosting|datacenter" -o | sort -u | head -20
+            echo
+          done
