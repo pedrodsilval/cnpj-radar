@@ -2026,8 +2026,15 @@ export class CertidoesScraperService {
 
       // Se já existe certidão válida, o site pergunta antes de emitir uma
       // nova — confirma a emissão pra sempre ter o PDF/validade atuais.
-      const modalCertidaoValida = page.getByText('Certidão Válida Encontrada');
-      if (await modalCertidaoValida.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      // isVisible() sozinho NÃO espera (é um check imediato) — precisa de
+      // um waitFor de verdade, senão a checagem roda antes do modal
+      // renderizar e a lógica cai direto no fallback genérico.
+      const apareceuModal = await page
+        .getByText('Certidão Válida Encontrada')
+        .waitFor({ state: 'visible', timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (apareceuModal) {
         await page.getByRole('button', { name: 'Emitir Nova Certidão' }).click({ timeout: 8_000 });
         await page.waitForTimeout(3_000);
       }
@@ -2057,6 +2064,7 @@ export class CertidoesScraperService {
       // Não reconhecemos a resposta como sucesso nem como rejeição clara —
       // não arriscamos declarar REGULAR só com base em texto de página pra
       // um documento fiscal. Devolve o texto pra diagnóstico.
+      this.logger.warn(`CND Federal (headed local): resposta não reconhecida. apareceuModal=${apareceuModal} texto="${texto.slice(0, 400)}"`);
       return {
         status: 'INDISPONIVEL',
         validade: null,
