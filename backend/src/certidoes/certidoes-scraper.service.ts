@@ -1609,6 +1609,22 @@ export class CertidoesScraperService {
           dialog.dismiss().catch(() => {});
         });
 
+        // A ficha cadastral de verdade sai como download nativo (confirmado
+        // visualmente em 03/09/2026: uma caixa "Salvar como" pedindo pra
+        // salvar "Relatorio.pdf" apareceu no Chrome real durante o teste
+        // manual) — igual ao bug do CNDT. O texto que sobra na página depois
+        // do postback é só o formulário resetado ("CGA: [vazio] ... clique
+        // em Cancelar"), sem o número do CGA nele.
+        let downloadBuffer: Buffer | null = null;
+        page.on('download', (download) => {
+          download.createReadStream().then((stream) => {
+            if (!stream) return;
+            const chunks: Buffer[] = [];
+            stream.on('data', (c) => chunks.push(c));
+            stream.on('end', () => { downloadBuffer = Buffer.concat(chunks); });
+          }).catch(() => {});
+        });
+
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
 
         await page.locator('#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj').click();
@@ -1652,7 +1668,7 @@ export class CertidoesScraperService {
           page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {}),
           page.locator('#ctl00_ContentPlaceHolderPrincipal_BtnConsultar0').click(),
         ]);
-        await page.waitForTimeout(1_500); // dá tempo do postback assíncrono (UpdatePanel) renderizar
+        await page.waitForTimeout(2_000); // dá tempo do postback (UpdatePanel) e do stream de download terminarem
 
         // innerText (não textContent) — textContent inclui o conteúdo bruto de
         // <script>, que nesse ASP.NET WebForms aparece antes do texto real
@@ -1688,7 +1704,11 @@ export class CertidoesScraperService {
         }
 
         const matchCga = texto.match(/CGA\s*[:\-]?\s*(\d[\d.]{3,})/i);
-        if (!matchCga) {
+        const numeroCga = matchCga ? matchCga[1].replace(/\./g, '') : null;
+
+        // Sem download nativo capturado E sem número de CGA no texto: não dá
+        // pra confirmar nada, aí sim é indisponível de verdade.
+        if (!downloadBuffer && !numeroCga) {
           return {
             status: 'INDISPONIVEL',
             validade: null,
@@ -1696,13 +1716,14 @@ export class CertidoesScraperService {
           };
         }
 
-        const numeroCga = matchCga[1].replace(/\./g, '');
-        const urlArquivo = await this.gerarPdfFichaCadastral(page, cnpjLimpo);
+        const urlArquivo = await this.gerarPdfFichaCadastral(downloadBuffer, cnpjLimpo);
 
         return {
           status: 'REGULAR',
           validade: null,
-          mensagem: `Inscrição Municipal (CGA) ativa em Salvador. Número: ${numeroCga}.`,
+          mensagem: numeroCga
+            ? `Inscrição Municipal (CGA) ativa em Salvador. Número: ${numeroCga}.`
+            : 'Inscrição Municipal (CGA) ativa em Salvador (ficha cadastral emitida).',
           urlArquivo,
         };
       } catch (err) {
@@ -1716,10 +1737,15 @@ export class CertidoesScraperService {
     });
   }
 
-  private async gerarPdfFichaCadastral(page: Page, cnpjLimpo: string): Promise<string | null> {
+  private async gerarPdfFichaCadastral(downloadBuffer: Buffer | null, cnpjLimpo: string): Promise<string | null> {
     try {
-      const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
-      return await this.storage.uploadPdf(pdfBuffer, `im-salvador-${cnpjLimpo}`);
+      if (!downloadBuffer) {
+        this.logger.warn('Inscrição Municipal Salvador: nenhum download capturado — não é a ficha oficial pra arriscar gerar um PDF substituto.');
+        return null;
+      }
+      const urlArquivo = await this.storage.uploadPdf(downloadBuffer, `im-salvador-${cnpjLimpo}`);
+      this.logger.log('Inscrição Municipal Salvador: PDF (download real) salvo');
+      return urlArquivo;
     } catch (err) {
       this.logger.warn(`Inscrição Municipal Salvador: não foi possível gerar PDF: ${err}`);
       return null;
