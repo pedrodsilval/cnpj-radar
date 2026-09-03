@@ -28,6 +28,7 @@ export interface ChecklistItem {
   certidaoId: string | null;
   dataConsulta: Date | null;
   urlArquivo: string | null;
+  observacoes: string | null;
 }
 
 const TODOS_TIPOS = Object.values(CertidaoTipo);
@@ -123,6 +124,7 @@ export class CertidoesService {
         certidaoId: c?.id ?? null,
         dataConsulta: c?.dataConsulta ?? null,
         urlArquivo: c?.urlArquivo ?? null,
+        observacoes: c?.observacoes ?? null,
       };
     });
   }
@@ -206,7 +208,7 @@ export class CertidoesService {
                        : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
                        : CertidaoStatus.INDISPONIVEL;
 
-      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null);
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
     }
 
     return resultados;
@@ -234,7 +236,7 @@ export class CertidoesService {
       const novoStatus = resultado.status === 'REGULAR'     ? CertidaoStatus.REGULAR
                        : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
                        : CertidaoStatus.INDISPONIVEL;
-      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null);
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
     }
 
     const item = (await this.checklist(cnpj)).find((c) => c.tipo === tipo);
@@ -460,6 +462,7 @@ ${blocos}${semPendencias}
     validade: string | null,
     origem: CertidaoOrigem,
     urlArquivo: string | null = null,
+    observacoes: string | null = null,
   ): Promise<void> {
     let c = await this.certidaoRepo.findOne({ where: { empresaId, tipo } });
     if (!c) c = this.certidaoRepo.create({ empresaId, cnpj });
@@ -469,6 +472,10 @@ ${blocos}${semPendencias}
     c.dataConsulta = new Date();
     c.origem = origem;
     if (urlArquivo) c.urlArquivo = urlArquivo;
+    // Substitui a observação anterior mesmo quando REGULAR (limpa
+    // pendência antiga) — só preserva o que já tinha se a consulta atual
+    // não trouxe mensagem nenhuma (ex.: consulta manual).
+    c.observacoes = observacoes;
     await this.certidaoRepo.save(c);
   }
 }

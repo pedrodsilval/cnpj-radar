@@ -21,6 +21,7 @@ interface ChecklistItem {
   certidaoId: string | null
   dataConsulta: string | null
   urlArquivo: string | null
+  observacoes: string | null
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -185,6 +186,11 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
             {item.dataConsulta && (
               <p className="text-[11px] text-gray-400 font-body mt-0.5">
                 Consultada em {new Date(item.dataConsulta).toLocaleDateString('pt-BR')}
+              </p>
+            )}
+            {item.observacoes && (item.status === 'IRREGULAR' || item.status === 'INDISPONIVEL') && (
+              <p className="text-xs text-gray-600 font-body mt-1.5 leading-snug">
+                {item.observacoes}
               </p>
             )}
           </div>
