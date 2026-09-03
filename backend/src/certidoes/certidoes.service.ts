@@ -1,10 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { join } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { chromium } from 'playwright';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
+import { SupabaseStorageService } from '../common/supabase-storage.service';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import {
   Certidao,
@@ -51,6 +50,7 @@ export class CertidoesService {
     @InjectRepository(Lead)
     private readonly leadRepo: Repository<Lead>,
     private readonly scraper: CertidoesScraperService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   private async resolverEmpresa(cnpj: string): Promise<Empresa> {
@@ -249,15 +249,8 @@ export class CertidoesService {
     const certidao = await this.certidaoRepo.findOne({ where: { id: certidaoId } });
     if (!certidao) throw new NotFoundException('Certidão não encontrada.');
 
-    const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-    if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+    const url = await this.storage.uploadPdf(file.buffer, certidaoId);
 
-    const filename = `${certidaoId}-${Date.now()}.pdf`;
-    const filepath = join(uploadDir, filename);
-
-    writeFileSync(filepath, file.buffer);
-
-    const url = `/uploads/certidoes/${filename}`;
     const anexo = this.anexoRepo.create({
       empresaId: certidao.empresaId,
       certidaoId,

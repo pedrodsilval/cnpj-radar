@@ -1,10 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { chromium, Browser, Page } from 'playwright';
 import { CredenciaisService } from '../credenciais/credenciais.service';
 import { CredencialTipo } from '../credenciais/credencial.entity';
 import { CaptchaClientService } from './captcha-client.service';
+import { SupabaseStorageService } from '../common/supabase-storage.service';
 
 // pdf-parse é CJS sem export default compatível com nodenext — require com tipagem explícita
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -24,6 +25,7 @@ export class CertidoesScraperService {
   constructor(
     private readonly credenciais: CredenciaisService,
     private readonly captchaClient: CaptchaClientService,
+    private readonly storage: SupabaseStorageService,
   ) {}
 
   private async comBrowser<T>(fn: (browser: Browser) => Promise<T>): Promise<T> {
@@ -195,20 +197,15 @@ export class CertidoesScraperService {
       });
 
       // Gera PDF do certificado renderizado via Playwright
-      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-      const filename = `crf-${cnpjLimpo}-${Date.now()}.pdf`;
-      const filepath = join(uploadDir, filename);
-
-      await page.pdf({
-        path: filepath,
+      const pdfBuffer = await page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
       });
+      const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `crf-${cnpjLimpo}`);
 
-      this.logger.log(`CRF: PDF gerado em ${filename}, validade=${validade}`);
-      return { validade, urlArquivo: `/uploads/certidoes/${filename}` };
+      this.logger.log(`CRF: PDF gerado, validade=${validade}`);
+      return { validade, urlArquivo };
     } catch (err) {
       this.logger.warn(`CRF: não foi possível gerar o certificado: ${err}`);
       try {
@@ -708,20 +705,15 @@ export class CertidoesScraperService {
         `,
       });
 
-      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-      const filename = `cndt-${cnpjLimpo}-${Date.now()}.pdf`;
-      const filepath = join(uploadDir, filename);
-
-      await page.pdf({
-        path: filepath,
+      const pdfBuffer = await page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
       });
+      const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `cndt-${cnpjLimpo}`);
 
-      this.logger.log(`CNDT: PDF gerado em ${filename}`);
-      return `/uploads/certidoes/${filename}`;
+      this.logger.log(`CNDT: PDF gerado`);
+      return urlArquivo;
     } catch (err) {
       this.logger.warn(`CNDT: não foi possível gerar PDF: ${err}`);
       return null;
@@ -889,20 +881,15 @@ export class CertidoesScraperService {
         `,
       });
 
-      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-      const filename = `ie-${cnpjLimpo}-${Date.now()}.pdf`;
-      const filepath = join(uploadDir, filename);
-
-      await page.pdf({
-        path: filepath,
+      const pdfBuffer = await page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
       });
+      const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `ie-${cnpjLimpo}`);
 
-      this.logger.log(`IE SEFAZ-BA: PDF gerado em ${filename}`);
-      return `/uploads/certidoes/${filename}`;
+      this.logger.log(`IE SEFAZ-BA: PDF gerado`);
+      return urlArquivo;
     } catch (err) {
       this.logger.warn(`IE SEFAZ-BA: não foi possível gerar PDF: ${err}`);
       return null;
@@ -1000,18 +987,16 @@ export class CertidoesScraperService {
         paginaRelatorio.goto(urlRelatorio, { waitUntil: 'commit', timeout: 20_000 }).catch(() => {}),
       ]);
 
-      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-      const filename = `cnd-estadual-${cnpjLimpo}-${Date.now()}.pdf`;
-      const filepath = join(uploadDir, filename);
-      await download.saveAs(filepath);
+      const caminhoTemporario = await download.path();
+      if (!caminhoTemporario) throw new Error('download.path() retornou vazio.');
+      const urlArquivo = await this.storage.uploadPdf(readFileSync(caminhoTemporario), `cnd-estadual-${cnpjLimpo}`);
 
-      this.logger.log(`CND Estadual BA: PDF salvo em ${filename}`);
+      this.logger.log(`CND Estadual BA: PDF salvo`);
       return {
         status: 'REGULAR',
         validade: null,
         mensagem: 'Certidão Negativa de Débitos Tributários Estaduais (BA) emitida com sucesso.',
-        urlArquivo: `/uploads/certidoes/${filename}`,
+        urlArquivo,
       };
     } catch (err) {
       this.logger.error(`CND Estadual BA erro para ${cnpjLimpo}: ${err}`);
@@ -1159,11 +1144,8 @@ export class CertidoesScraperService {
 
         await novaPage.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
 
-        const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-        if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-        const filename = `municipal-salvador-${cnpjLimpo}-${Date.now()}.pdf`;
-        const filepath = join(uploadDir, filename);
-        await novaPage.pdf({ path: filepath, format: 'A4', printBackground: true });
+        const pdfBuffer = await novaPage.pdf({ format: 'A4', printBackground: true });
+        const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-salvador-${cnpjLimpo}`);
 
         const texto = (await novaPage.innerText('body') ?? '').replace(/\s+/g, ' ');
         const validade = this.extrairData(texto);
@@ -1172,7 +1154,7 @@ export class CertidoesScraperService {
           status: 'REGULAR',
           validade,
           mensagem: 'Certidão de Regularidade Fiscal de Pessoa Jurídica (SEFAZ/PGMS Salvador) emitida com sucesso.',
-          urlArquivo: `/uploads/certidoes/${filename}`,
+          urlArquivo,
         };
       } catch (err) {
         this.logger.warn(`Certidão Municipal Salvador: falha ao emitir PDF final: ${err}`);
@@ -1364,7 +1346,7 @@ export class CertidoesScraperService {
 
         const pdfBuffer = capturedPdf ?? downloadBuffer;
         if (pdfBuffer) {
-          const urlArquivo = this.salvarPdfBuffer(pdfBuffer, `municipal-laurodefreitas-${cnpjLimpo}`);
+          const urlArquivo = await this.salvarPdfBuffer(pdfBuffer, `municipal-laurodefreitas-${cnpjLimpo}`);
           this.logger.log('Certidão Municipal Lauro de Freitas: PDF capturado, emitida com sucesso.');
           return {
             status: 'REGULAR',
@@ -1518,17 +1500,9 @@ export class CertidoesScraperService {
     }
   }
 
-  // Salva um Buffer de PDF em disco e retorna a URL relativa
-  private salvarPdfBuffer(buffer: Buffer, prefixo: string): string {
-    const uploadsDir = join(process.cwd(), 'uploads', 'certidoes');
-    if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
-
-    const filename = `${prefixo}-${Date.now()}.pdf`;
-    const filepath = join(uploadsDir, filename);
-
-    writeFileSync(filepath, buffer);
-
-    return `/uploads/certidoes/${filename}`;
+  // Salva um Buffer de PDF no Supabase Storage e retorna a URL pública
+  private async salvarPdfBuffer(buffer: Buffer, prefixo: string): Promise<string> {
+    return this.storage.uploadPdf(buffer, prefixo);
   }
 
   // ---------------------------------------------------------------------------
@@ -1722,12 +1696,8 @@ export class CertidoesScraperService {
 
   private async gerarPdfFichaCadastral(page: Page, cnpjLimpo: string): Promise<string | null> {
     try {
-      const uploadDir = join(process.cwd(), 'uploads', 'certidoes');
-      if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
-      const filename = `im-salvador-${cnpjLimpo}-${Date.now()}.pdf`;
-      const filepath = join(uploadDir, filename);
-      await page.pdf({ path: filepath, format: 'A4', printBackground: true });
-      return `/uploads/certidoes/${filename}`;
+      const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
+      return await this.storage.uploadPdf(pdfBuffer, `im-salvador-${cnpjLimpo}`);
     } catch (err) {
       this.logger.warn(`Inscrição Municipal Salvador: não foi possível gerar PDF: ${err}`);
       return null;
@@ -2049,7 +2019,7 @@ export class CertidoesScraperService {
           status: 'REGULAR',
           validade,
           mensagem: 'Certidão de Débitos Relativos a Créditos Tributários Federais e à Dívida Ativa da União emitida.',
-          urlArquivo: capturedPdf ? this.salvarPdfBuffer(capturedPdf, `cnd-federal-${cnpjLimpo}`) : undefined,
+          urlArquivo: capturedPdf ? await this.salvarPdfBuffer(capturedPdf, `cnd-federal-${cnpjLimpo}`) : undefined,
         };
       }
 
@@ -2144,18 +2114,7 @@ export class CertidoesScraperService {
 
   // Salva um PDF em base64 em disco e retorna a URL relativa
   private async salvarPdfBase64(pdfBase64: string, prefixo: string): Promise<string> {
-    const uploadsDir = join(process.cwd(), 'uploads', 'certidoes');
-    if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
-
-    const timestamp = Date.now();
-    const filename = `${prefixo}-${timestamp}.pdf`;
-    const filepath = join(uploadsDir, filename);
-
-    const { writeFileSync } = await import('fs');
-    writeFileSync(filepath, Buffer.from(pdfBase64, 'base64'));
-    this.logger.log(`CND Federal: PDF salvo em ${filename}`);
-
-    return `/uploads/certidoes/${filename}`;
+    return this.storage.uploadPdf(Buffer.from(pdfBase64, 'base64'), prefixo);
   }
 
   // Extrai os cookies relevantes do header Set-Cookie para reenvio

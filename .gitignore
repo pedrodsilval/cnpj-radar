@@ -22,8 +22,11 @@ npm-debug.log*
 supabase/.branches
 supabase/.temp
 
-# Uploads gerados em runtime (certidões, PDFs)
+# Uploads gerados em runtime (certidões, PDFs) — legado, migrado pro Supabase Storage
 backend/uploads/
+
+# Perfil persistente do Chrome usado pelo fluxo local do CND Federal
+backend/.chrome-profile-cnd-federal/
 
 # Relatórios e arquivos temporários gerados em teste
 *.pdf

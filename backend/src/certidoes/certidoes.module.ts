@@ -10,6 +10,7 @@ import { CertidoesController } from './certidoes.controller';
 import { CertidoesScraperService } from './certidoes-scraper.service';
 import { CaptchaClientService } from './captcha-client.service';
 import { OnnxCaptchaSolverService } from './onnx-captcha-solver.service';
+import { SupabaseStorageService } from '../common/supabase-storage.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { OnnxCaptchaSolverService } from './onnx-captcha-solver.service';
     CredenciaisModule,
   ],
   controllers: [CertidoesController],
-  providers: [CertidoesService, CertidoesScraperService, CaptchaClientService, OnnxCaptchaSolverService],
+  providers: [CertidoesService, CertidoesScraperService, CaptchaClientService, OnnxCaptchaSolverService, SupabaseStorageService],
   exports: [CertidoesService],
 })
 export class CertidoesModule {}
