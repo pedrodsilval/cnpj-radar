@@ -25,12 +25,14 @@ export class EmpresasService {
     if (!busca) {
       return this.empresaRepo.find({ order: { razaoSocial: 'ASC' }, take: 200 });
     }
+    // Match parcial no CNPJ (ex: digitar só os 6 primeiros dígitos já filtra) —
+    // antes só casava CNPJ completo exato, então buscar por prefixo não
+    // retornava nada mesmo com o placeholder do campo prometendo isso.
     const buscaLimpa = busca.replace(/\D/g, '');
-    return this.empresaRepo.find({
-      where: [{ cnpj: buscaLimpa || busca }, { razaoSocial: ILike(`%${busca}%`) }],
-      order: { razaoSocial: 'ASC' },
-      take: 200,
-    });
+    const where = buscaLimpa
+      ? [{ cnpj: ILike(`%${buscaLimpa}%`) }, { razaoSocial: ILike(`%${busca}%`) }]
+      : [{ razaoSocial: ILike(`%${busca}%`) }];
+    return this.empresaRepo.find({ where, order: { razaoSocial: 'ASC' }, take: 200 });
   }
 
   async buscarPorId(id: string): Promise<{ empresa: Empresa; certificado: CertificadoPublico | null }> {
