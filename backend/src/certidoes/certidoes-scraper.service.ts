@@ -1761,6 +1761,33 @@ export class CertidoesScraperService {
     return this.consultarCndFederalCom2captcha(cnpjLimpo, chave2captcha);
   }
 
+  // ---------------------------------------------------------------------------
+  // Por que não vale investir num solver local pra esse hCaptcha (investigado
+  // em 02-03/09/2026, ver api_captcha/diagnostico_hcaptcha_receita.py):
+  //
+  // Esse hCaptcha usa Private Access Tokens (PAT — padrão Privacy Pass,
+  // Apple/Cloudflare), não um desafio de imagem. Confirmado direto na
+  // requisição real de rede: o header X-Captcha-Token SEMPRE chega populado
+  // com um JWT de milhares de caracteres (prefixo "P1_...") — o hCaptcha
+  // gera o token normalmente — mas a Receita rejeita com "023 -
+  // CaptchaFalhaValidacao" toda vez, porque o token PAT exige atestação
+  // criptográfica de hardware real (tipo Secure Enclave) que um Chromium
+  // automatizado não tem como produzir. Não é um problema de "resolver a
+  // imagem certo" — não existe imagem nenhuma; é a prova de dispositivo
+  // real que falha.
+  //
+  // Testado e descartado, todos com o MESMO resultado (token gerado, 023
+  // rejeitado): evasões completas de stealth (mesmas de novaPage()),
+  // movimento de mouse realista simulando interação humana, e troca de
+  // user-agent pra Firefox (a decisão de emitir PAT não muda com o UA).
+  // Isso também explica por que o próprio 2captcha luta tanto com esse
+  // hCaptcha específico (timeouts e ERROR_CAPTCHA_UNSOLVABLE observados em
+  // produção) — provavelmente esbarram na mesma atestação.
+  //
+  // Não reabrir essa investigação sem evidência nova de que a Receita
+  // mudou a config desse sitekey (ex.: pat=off na URL do iframe de
+  // desafio, capturável no mesmo script de diagnóstico).
+  // ---------------------------------------------------------------------------
   private async consultarCndFederalCom2captcha(
     cnpjLimpo: string,
     apiKey: string,
@@ -1799,6 +1826,7 @@ export class CertidoesScraperService {
             'Referer': PAGE_URL,
           },
           body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ', tipoContribuinteEnum: 'CNPJ' }),
+          signal: AbortSignal.timeout(30_000),
         });
 
         if (!verificarRes.ok) {
@@ -1828,6 +1856,7 @@ export class CertidoesScraperService {
             'Referer': PAGE_URL,
           },
           body: JSON.stringify({ ni: cnpjLimpo, tipoContribuinte: 'PJ', tipoContribuinteEnum: 'CNPJ' }),
+          signal: AbortSignal.timeout(30_000),
         });
 
         const emissaoJson = (await emissaoRes.json()) as {
@@ -1922,6 +1951,7 @@ export class CertidoesScraperService {
           pageurl: pageUrl,
           json: '1',
         }),
+        signal: AbortSignal.timeout(20_000),
       });
       const submitJson = (await submitRes.json()) as { status: number; request: string };
       if (submitJson.status !== 1) {
@@ -1935,6 +1965,7 @@ export class CertidoesScraperService {
         await new Promise((r) => setTimeout(r, 5_000));
         const resRes = await fetch(
           `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
+          { signal: AbortSignal.timeout(15_000) },
         );
         const resJson = (await resRes.json()) as { status: number; request: string };
         if (resJson.status === 1) return { token: resJson.request, erro: null };
