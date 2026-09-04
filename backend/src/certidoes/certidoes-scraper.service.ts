@@ -2057,8 +2057,18 @@ export class CertidoesScraperService {
         await page.waitForTimeout(3_000);
       }
 
+      // "Resultado da Emissão de Certidão... Estamos analisando seu pedido
+      // de emissão de certidão. Aguarde." é um estado intermediário (o site
+      // processa a emissão de forma assíncrona) — confirmado em teste real
+      // (03/09/2026): não é rejeição de captcha/PAT, é só questão de esperar
+      // mais. Sem esse polling, a leitura única de texto pegava esse
+      // "aguarde" e caía direto no fallback "resposta não reconhecida".
       await page.waitForTimeout(2_000);
-      const texto = ((await page.locator('body').innerText().catch(() => '')) ?? '').trim();
+      let texto = ((await page.locator('body').innerText().catch(() => '')) ?? '').trim();
+      for (let tentativa = 0; tentativa < 10 && /aguarde|analisando/i.test(texto); tentativa++) {
+        await page.waitForTimeout(3_000);
+        texto = ((await page.locator('body').innerText().catch(() => '')) ?? '').trim();
+      }
       const textoLower = texto.toLowerCase();
 
       if (textoLower.includes('emitida com sucesso')) {

@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:admin": "ts-node -r tsconfig-paths/register src/seed-admin.ts",
-    "seed:n8n": "ts-node -r tsconfig-paths/register src/seed-n8n.ts"
+    "seed:n8n": "ts-node -r tsconfig-paths/register src/seed-n8n.ts",
+    "local-runner": "ts-node -r tsconfig-paths/register src/local-runner.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
