@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { ILike, QueryFailedError, Repository } from 'typeorm';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { CertificadoDigital } from './entities/certificado-digital.entity';
+import { Certidao } from '../database/entities/certidao.entity';
+import { Anexo } from '../database/entities/anexo.entity';
 import { CredenciaisCriptService } from '../credenciais/credenciais-cript.service';
 import type {
   CriarEmpresaDto,
@@ -18,6 +20,10 @@ export class EmpresasService {
     private readonly empresaRepo: Repository<Empresa>,
     @InjectRepository(CertificadoDigital)
     private readonly certificadoRepo: Repository<CertificadoDigital>,
+    @InjectRepository(Certidao)
+    private readonly certidaoRepo: Repository<Certidao>,
+    @InjectRepository(Anexo)
+    private readonly anexoRepo: Repository<Anexo>,
     private readonly cript: CredenciaisCriptService,
   ) {}
 
@@ -112,6 +118,31 @@ export class EmpresasService {
     });
 
     return this.certificadoToPublic(await this.certificadoRepo.save(certificado));
+  }
+
+  async remover(id: string): Promise<{ ok: boolean }> {
+    const empresa = await this.empresaRepo.findOne({ where: { id } });
+    if (!empresa) throw new NotFoundException(`Empresa ${id} não encontrada.`);
+
+    // Certidao e Anexo não têm relação/FK com Empresa no banco (só a coluna
+    // empresa_id) — sem apagar aqui, ficariam órfãs após o DELETE abaixo.
+    // Os demais relacionados (sócios, CNAEs, consultas, certificados, leads)
+    // já têm ON DELETE CASCADE/SET NULL nativo e são resolvidos pelo banco.
+    await this.certidaoRepo.delete({ empresaId: id });
+    await this.anexoRepo.delete({ empresaId: id });
+
+    try {
+      await this.empresaRepo.delete({ id });
+    } catch (err) {
+      if (err instanceof QueryFailedError) {
+        throw new BadRequestException(
+          'Não foi possível remover: existem outros registros vinculados a esta empresa.',
+        );
+      }
+      throw err;
+    }
+
+    return { ok: true };
   }
 
   async removerCertificado(empresaId: string): Promise<{ ok: boolean }> {

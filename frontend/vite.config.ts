@@ -16,6 +16,7 @@ export default defineConfig({
       '/tarefas':     'http://localhost:3000',
       '/workflow-runs': 'http://localhost:3000',
       '/empresas':    'http://localhost:3000',
+      '/pgdas':       'http://localhost:3000',
     },
   },
   test: {

@@ -12,6 +12,7 @@ import { CertidoesModule } from './certidoes/certidoes.module';
 import { CredenciaisModule } from './credenciais/credenciais.module';
 import { PainelModule } from './painel/painel.module';
 import { EmpresasModule } from './empresas/empresas.module';
+import { PgdasModule } from './pgdas/pgdas.module';
 import { AuthModule } from './auth/auth.module';
 import { TarefasModule } from './tarefas/tarefas.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -39,6 +40,7 @@ import { Usuario } from './database/entities/usuario.entity';
     CredenciaisModule,
     PainelModule,
     EmpresasModule,
+    PgdasModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],

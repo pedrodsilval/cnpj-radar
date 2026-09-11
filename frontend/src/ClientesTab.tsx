@@ -8,6 +8,7 @@ interface Empresa {
   cnpj: string
   razaoSocial: string
   situacaoCadastral: string
+  porte: string | null
   inscricaoMobiliaria: string | null
   cga: string | null
   inscricaoEstadual: string | null
@@ -20,6 +21,26 @@ interface CertificadoPublico {
   validade: string | null
   nomeArquivo: string
   criadoEm: string
+}
+
+interface PgdasDeclaracao {
+  id: string
+  periodoApuracao: string
+  rbt12: number
+  receitaBrutaMes: number | null
+  nomeArquivo: string
+  criadoEm: string
+}
+
+const LIMITE_ME = 360_000
+
+function formatarMoeda(valor: number): string {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function formatarPeriodo(periodo: string): string {
+  const [ano, mes] = periodo.split('-')
+  return `${mes}/${ano}`
 }
 
 function formatarCnpj(cnpj: string): string {
@@ -64,6 +85,14 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
   const [erroCert, setErroCert] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [arquivoSelecionado, setArquivoSelecionado] = useState<File | null>(null)
+  const [removendo, setRemovendo] = useState(false)
+
+  const [pgdasDeclaracoes, setPgdasDeclaracoes] = useState<PgdasDeclaracao[]>([])
+  const [carregandoPgdas, setCarregandoPgdas] = useState(false)
+  const [enviandoPgdas, setEnviandoPgdas] = useState(false)
+  const [erroPgdas, setErroPgdas] = useState<string | null>(null)
+  const pgdasFileRef = useRef<HTMLInputElement>(null)
+  const [arquivoPgdasSelecionado, setArquivoPgdasSelecionado] = useState<File | null>(null)
 
   async function buscarDadosReceita() {
     const limpo = cnpj.replace(/\D/g, '')
@@ -130,7 +159,60 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
     setCertificado(null)
   }
 
+  async function removerEmpresa() {
+    if (!empresa) return
+    if (!confirm(`Excluir "${empresa.razaoSocial}"? Isso remove também certidões, anexos e certificado digital vinculados. Não pode ser desfeito.`)) return
+    setRemovendo(true); setErro(null)
+    try {
+      const res = await apiFetch(`/empresas/${empresa.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        setErro((json as { message?: string }).message ?? 'Não foi possível excluir a empresa.')
+        return
+      }
+      onSalvo()
+    } catch { setErro('Erro de rede.') }
+    finally { setRemovendo(false) }
+  }
+
+  const carregarPgdas = useCallback(async () => {
+    if (!empresa) return
+    setCarregandoPgdas(true)
+    try {
+      const res = await apiFetch(`/pgdas/${empresa.id}`)
+      if (res.ok) setPgdasDeclaracoes(await res.json() as PgdasDeclaracao[])
+    } catch { /* silencioso — não é crítico pro resto do modal funcionar */ }
+    finally { setCarregandoPgdas(false) }
+  }, [empresa])
+
+  useEffect(() => { void carregarPgdas() }, [carregarPgdas])
+
+  async function enviarPgdas() {
+    if (!empresa) return
+    if (!arquivoPgdasSelecionado) { setErroPgdas('Selecione o PDF do recibo do PGDAS-D.'); return }
+    setEnviandoPgdas(true); setErroPgdas(null)
+    try {
+      const fd = new FormData()
+      fd.append('arquivo', arquivoPgdasSelecionado)
+      const res = await apiFetch(`/pgdas/${empresa.id}`, { method: 'POST', body: fd })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        setErroPgdas((json as { message?: string }).message ?? 'Não foi possível processar o PGDAS-D.')
+        return
+      }
+      setArquivoPgdasSelecionado(null)
+      if (pgdasFileRef.current) pgdasFileRef.current.value = ''
+      await carregarPgdas()
+    } catch { setErroPgdas('Erro de rede no upload.') }
+    finally { setEnviandoPgdas(false) }
+  }
+
   const dias = diasParaVencer(certificado?.validade ?? null)
+
+  const ultimoPgdas = pgdasDeclaracoes[0] ?? null
+  const alertaEnquadramento = ultimoPgdas && /^\s*me\s*$|micro\s*empresa/i.test(empresa?.porte ?? '') && ultimoPgdas.rbt12 > LIMITE_ME
+    ? ultimoPgdas
+    : null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-depth/60 p-4" role="dialog" aria-modal="true">
@@ -232,13 +314,73 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
               </div>
             </div>
           )}
+
+          {editando && (
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-2">PGDAS-D / Enquadramento Simples Nacional</p>
+
+              {alertaEnquadramento && (
+                <div className={`rounded-xl px-3 py-2.5 mb-3 text-xs font-body ${
+                  alertaEnquadramento.rbt12 > LIMITE_ME * 1.2 ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-amber-50 border border-amber-300 text-amber-700'
+                }`}>
+                  <p className="font-display font-bold">
+                    {alertaEnquadramento.rbt12 > LIMITE_ME * 1.2 ? '⚠ Reenquadramento EPP imediato' : '⚠ Excedeu o limite de ME'}
+                  </p>
+                  <p className="mt-0.5">
+                    RBT12 de {formatarPeriodo(alertaEnquadramento.periodoApuracao)} é {formatarMoeda(alertaEnquadramento.rbt12)},
+                    acima do limite de {formatarMoeda(LIMITE_ME)} pra Microempresa.
+                    {alertaEnquadramento.rbt12 > LIMITE_ME * 1.2
+                      ? ' Excesso maior que 20% — reenquadra pra EPP já a partir do mês seguinte.'
+                      : ' Excesso até 20% — reenquadra pra EPP a partir de janeiro do ano seguinte.'}
+                  </p>
+                </div>
+              )}
+
+              {carregandoPgdas ? (
+                <p className="text-xs text-gray-400 font-body mb-3">Carregando declarações…</p>
+              ) : pgdasDeclaracoes.length > 0 ? (
+                <div className="space-y-1.5 mb-3">
+                  {pgdasDeclaracoes.map(d => (
+                    <div key={d.id} className="bg-gray-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs font-body">
+                      <span className="font-display font-bold text-depth">{formatarPeriodo(d.periodoApuracao)}</span>
+                      <span className="text-gray-500">RBT12: {formatarMoeda(d.rbt12)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 font-body mb-3">Nenhum PGDAS-D enviado ainda.</p>
+              )}
+
+              <div className="flex gap-2">
+                <button onClick={() => pgdasFileRef.current?.click()}
+                  className="text-xs font-display font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-500 hover:text-depth hover:border-gray-300 transition-colors whitespace-nowrap">
+                  {arquivoPgdasSelecionado ? arquivoPgdasSelecionado.name : 'Escolher recibo do PGDAS-D (.pdf)'}
+                </button>
+                <input ref={pgdasFileRef} type="file" accept=".pdf" className="hidden"
+                  onChange={e => setArquivoPgdasSelecionado(e.target.files?.[0] ?? null)} />
+                <button onClick={enviarPgdas} disabled={enviandoPgdas}
+                  className="text-xs font-display font-bold bg-depth text-white px-4 py-2 rounded-xl hover:bg-primary transition-colors disabled:opacity-50 whitespace-nowrap">
+                  {enviandoPgdas ? 'Enviando…' : 'Enviar'}
+                </button>
+              </div>
+              {erroPgdas && <p className="text-xs text-danger font-display font-bold mt-2">⚠ {erroPgdas}</p>}
+            </div>
+          )}
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 flex-shrink-0">
-          <button onClick={onFechar} className="text-sm font-display font-bold text-gray-500 px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">Cancelar</button>
-          <button onClick={salvar} disabled={salvando} className="text-sm font-display font-bold bg-primary text-white px-5 py-2 rounded-lg hover:bg-depth transition-colors disabled:opacity-50">
-            {salvando ? 'Salvando…' : editando ? 'Salvar' : 'Criar empresa'}
-          </button>
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-2 flex-shrink-0">
+          {editando ? (
+            <button onClick={removerEmpresa} disabled={removendo}
+              className="text-sm font-display font-bold text-danger px-4 py-2 rounded-lg hover:bg-danger/10 transition-colors disabled:opacity-50">
+              {removendo ? 'Excluindo…' : 'Excluir empresa'}
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button onClick={onFechar} className="text-sm font-display font-bold text-gray-500 px-4 py-2 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">Cancelar</button>
+            <button onClick={salvar} disabled={salvando} className="text-sm font-display font-bold bg-primary text-white px-5 py-2 rounded-lg hover:bg-depth transition-colors disabled:opacity-50">
+              {salvando ? 'Salvando…' : editando ? 'Salvar' : 'Criar empresa'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -32,6 +32,14 @@ export class EmpresasController {
     return this.service.atualizar(id, dto);
   }
 
+  // Restrito a administrador: apaga a empresa e tudo que depende dela
+  // (certidões, anexos, certificado digital, sócios/CNAEs, leads).
+  @Delete(':id')
+  @Roles('administrador')
+  remover(@Param('id') id: string) {
+    return this.service.remover(id);
+  }
+
   // Upload/substituição de certificado restrito a administrador — mesmo
   // nível de acesso do módulo `credenciais`, dado o nível de sensibilidade
   // (arquivo .pfx + senha, equivalente a uma assinatura digital da empresa).
