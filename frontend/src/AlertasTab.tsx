@@ -11,6 +11,59 @@ interface Alerta {
   dataConsulta: string | null
 }
 
+interface AlertaEnquadramento {
+  empresaId: string
+  cnpj: string
+  razaoSocial: string
+  tipo: 'IMEDIATO' | 'PROXIMO_ANO'
+  rbt12: number
+  excedente: number
+  periodoApuracao: string
+}
+
+function formatarMoeda(valor: number): string {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function formatarPeriodo(periodo: string): string {
+  const [ano, mes] = periodo.split('-')
+  return `${mes}/${ano}`
+}
+
+// Baixa um PDF autenticado — um <a href download> comum não envia o header
+// Authorization, então o backend sempre respondia 401 antes desse fetch+blob.
+async function baixarRelatorio(url: string, nomeArquivo: string): Promise<void> {
+  const res = await apiFetch(url)
+  if (!res.ok) return
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = nomeArquivo
+  a.click()
+  URL.revokeObjectURL(blobUrl)
+}
+
+function AlertaEnquadramentoCard({ alerta }: { alerta: AlertaEnquadramento }) {
+  const imediato = alerta.tipo === 'IMEDIATO'
+  return (
+    <div className={`flex items-center justify-between gap-4 px-4 py-3 rounded-2xl border ${
+      imediato ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-300'
+    }`}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-display font-black text-depth text-sm">{formatarCnpj(alerta.cnpj)}</span>
+          <span className="text-xs font-body text-gray-500">{alerta.razaoSocial}</span>
+        </div>
+        <p className={`text-xs font-body mt-0.5 font-semibold ${imediato ? 'text-red-600' : 'text-amber-700'}`}>
+          RBT12 de {formatarPeriodo(alerta.periodoApuracao)}: {formatarMoeda(alerta.rbt12)} — excedente de {formatarMoeda(alerta.excedente)} sobre o limite de ME.{' '}
+          {imediato ? 'Reenquadra pra EPP já no mês seguinte.' : 'Reenquadra pra EPP a partir de janeiro do ano seguinte.'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 const TIPO_LABEL: Record<string, string> = {
   FGTS_CRF:            'FGTS / CRF',
   CND_FEDERAL:         'CND Federal / PGFN',
@@ -46,8 +99,8 @@ function AlertaCard({ alerta }: { alerta: Alerta }) {
 
   return (
     <div className={`flex items-center justify-between gap-4 px-4 py-3 rounded-2xl border ${
-      irregular ? 'bg-red-50/40 border-red-200'
-      : urgente  ? 'bg-amber-50/60 border-amber-300'
+      irregular ? 'bg-red-50 border-red-200'
+      : urgente  ? 'bg-amber-50 border-amber-300'
                  : 'bg-white border-gray-100'
     }`}>
       <div className="flex-1 min-w-0">
@@ -86,6 +139,8 @@ export function AlertasTab() {
   const [erro, setErro]             = useState<string | null>(null)
   const [dias, setDias]             = useState(30)
 
+  const [alertasEnquadramento, setAlertasEnquadramento] = useState<AlertaEnquadramento[]>([])
+
   async function carregar(d: number) {
     setCarregando(true)
     setErro(null)
@@ -105,6 +160,13 @@ export function AlertasTab() {
   }
 
   useEffect(() => { carregar(dias) }, [dias])
+
+  useEffect(() => {
+    apiFetch('/pgdas/alertas')
+      .then(r => r.ok ? r.json() : [])
+      .then((data: unknown) => { if (Array.isArray(data)) setAlertasEnquadramento(data as AlertaEnquadramento[]) })
+      .catch(() => {})
+  }, [])
 
   const irregulares = alertas.filter(a => a.status === 'IRREGULAR')
   const vencendo    = alertas.filter(a => a.status !== 'IRREGULAR')
@@ -129,9 +191,9 @@ export function AlertasTab() {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="font-display font-black text-depth text-lg">Alertas de Certidões</h2>
+          <h2 className="font-display font-black text-depth text-lg">Central de Alertas</h2>
           <p className="text-gray-400 font-body text-sm mt-0.5">
-            Certidões com problema em todos os leads cadastrados
+            Certidões com problema e enquadramento no Simples Nacional
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -150,15 +212,34 @@ export function AlertasTab() {
               <option value={90}>90 dias</option>
             </select>
           </div>
-          <a
-            href="/certidoes/relatorio-pendencias"
-            download
+          <button
+            onClick={() => baixarRelatorio('/certidoes/relatorio-pendencias', `pendencias-certidoes-${new Date().toISOString().slice(0, 10)}.pdf`)}
             className="text-sm font-display font-bold px-4 py-2 rounded-xl border border-gray-200 text-gray-500 hover:text-depth hover:border-gray-300 transition-colors whitespace-nowrap"
           >
-            Baixar relatório PDF
-          </a>
+            Baixar PDF de certidões
+          </button>
         </div>
       </div>
+
+      {alertasEnquadramento.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <h3 className="font-display font-bold text-depth text-xs uppercase tracking-widest flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" aria-hidden="true" />
+              Enquadramento Simples Nacional ({alertasEnquadramento.length})
+            </h3>
+            <button
+              onClick={() => baixarRelatorio('/pgdas/relatorio-enquadramento', `enquadramento-simples-${new Date().toISOString().slice(0, 10)}.pdf`)}
+              className="text-xs font-display font-bold px-3 py-1.5 rounded-xl border border-gray-200 text-gray-500 hover:text-depth hover:border-gray-300 transition-colors whitespace-nowrap"
+            >
+              Baixar PDF de enquadramento
+            </button>
+          </div>
+          <div className="space-y-2">
+            {alertasEnquadramento.map(a => <AlertaEnquadramentoCard key={a.empresaId} alerta={a} />)}
+          </div>
+        </section>
+      )}
 
       {alertas.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
