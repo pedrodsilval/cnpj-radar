@@ -19,18 +19,32 @@ async function bootstrap() {
     Logger.warn(`Falha ao aquecer conexão com o banco: ${err}`, 'Bootstrap');
   }
 
-  app.use(
+  // upgrade-insecure-requests e Strict-Transport-Security (HSTS) mandam o
+  // navegador só falar https com esse host — inofensivo atrás de proxies que
+  // já servem https (Render), mas quebra o carregamento (e depois fica preso
+  // por até 1 ano via HSTS) quando o Nest responde direto em http puro (ex:
+  // VPS sem TLS na frente). Decide por requisição olhando x-forwarded-proto.
+  app.use((req, res, next) => {
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const cspDirectives = { ...helmet.contentSecurityPolicy.getDefaultDirectives() };
+    if (!isHttps) delete cspDirectives['upgrade-insecure-requests'];
+
     helmet({
-      // Permite as fontes externas (Google Fonts, Fontshare) que o frontend usa.
       contentSecurityPolicy: {
+        // useDefaults:true (o padrão) faz o helmet mesclar de volta as
+        // diretivas default dele por baixo, inclusive a que acabamos de
+        // remover — precisa desligar pra o delete acima realmente valer.
+        useDefaults: false,
+        // Permite as fontes externas (Google Fonts, Fontshare) que o frontend usa.
         directives: {
-          ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+          ...cspDirectives,
           'style-src': ["'self'", "'unsafe-inline'", 'fonts.googleapis.com', 'api.fontshare.com'],
           'font-src': ["'self'", 'fonts.gstatic.com', 'cdn.fontshare.com'],
         },
       },
-    }),
-  );
+      hsts: isHttps ? undefined : false,
+    })(req, res, next);
+  });
 
   // Valida e sanitiza todos os payloads — rejeita campos não declarados nos DTOs
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false }));
