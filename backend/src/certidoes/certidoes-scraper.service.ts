@@ -6,10 +6,7 @@ import { CredenciaisService } from '../credenciais/credenciais.service';
 import { CredencialTipo } from '../credenciais/credencial.entity';
 import { CaptchaClientService } from './captcha-client.service';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
-
-// pdf-parse é CJS sem export default compatível com nodenext — require com tipagem explícita
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse: (buf: Buffer) => Promise<{ text: string }> = require('pdf-parse');
+import { PDFParse } from 'pdf-parse';
 
 export interface ResultadoScraper {
   status: 'REGULAR' | 'IRREGULAR' | 'INDISPONIVEL' | 'ERRO';
@@ -270,8 +267,10 @@ export class CertidoesScraperService {
 
   // ---------------------------------------------------------------------------
   // CNDT Trabalhista — TST
-  // Portal: https://cndt-certidao.tst.jus.br/gerarCertidao.faces
-  // CAPTCHA: imagem base64 embutida no src da <img id="idImgBase64">
+  // Portal: https://cndt-certidao.tst.jus.br/gerarCertidao (site reformulado
+  // em 09/2026 — a URL antiga .faces redireciona pra home, e todos os IDs de
+  // formulário mudaram, ver achados em [[projeto-cnd-federal-local-pendente]])
+  // CAPTCHA: imagem base64 embutida no src da <img id="captcha-imagem">
   // Estratégia: 2captcha (se chave cadastrada) → Whisper como fallback
   // ---------------------------------------------------------------------------
   async consultarCndt(cnpj: string): Promise<ResultadoScraper> {
@@ -313,7 +312,7 @@ export class CertidoesScraperService {
 
       for (let tentativa = 1; tentativa <= 3; tentativa++) {
         try {
-          await page.goto('https://cndt-certidao.tst.jus.br/gerarCertidao.faces', {
+          await page.goto('https://cndt-certidao.tst.jus.br/gerarCertidao', {
             waitUntil: 'networkidle',
             timeout: 30_000,
           });
@@ -327,9 +326,9 @@ export class CertidoesScraperService {
             fetch('https://api.ipify.org?format=json').then((r) => r.json()).then((d) => d.ip).catch((e) => `erro:${e}`),
           );
 
-          await page.locator('#gerarCertidaoForm\\:cpfCnpj').fill(cnpjLimpo);
+          await page.locator('#cpfCnpj').fill(cnpjLimpo);
 
-          const imageSrc = await page.locator('img#idImgBase64').getAttribute('src') ?? '';
+          const imageSrc = await page.locator('#captcha-imagem').getAttribute('src') ?? '';
           if (!imageSrc) {
             this.logger.warn(`CNDT 2captcha tentativa ${tentativa}: imagem CAPTCHA não encontrada.`);
             continue;
@@ -344,7 +343,7 @@ export class CertidoesScraperService {
           }
 
           this.logger.log(`CNDT 2captcha tentativa ${tentativa}: resposta "${respostaCaptcha}"`);
-          await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
+          await page.locator('#captcha-resposta').fill(respostaCaptcha.toLowerCase());
           // Instrumentacao: medir a demora entre capturar a imagem e
           // submeter a resposta, E checar se a imagem do captcha na tela
           // ainda e a MESMA que foi capturada e resolvida -- se o site
@@ -353,7 +352,7 @@ export class CertidoesScraperService {
           // nao e mais a valida, o que pareceria "resposta errada" sem ser
           // erro do modelo. Comparacao feita por tamanho + fim da string
           // (suficiente pra detectar troca, sem logar a imagem inteira).
-          const imageSrcNoSubmit = await page.locator('img#idImgBase64').getAttribute('src').catch(() => null);
+          const imageSrcNoSubmit = await page.locator('#captcha-imagem').getAttribute('src').catch(() => null);
           const imagemTrocou = imageSrcNoSubmit !== null && imageSrcNoSubmit !== imageSrc;
           const ipFinal = await page.evaluate(() =>
             fetch('https://api.ipify.org?format=json').then((r) => r.json()).then((d) => d.ip).catch((e) => `erro:${e}`),
@@ -366,7 +365,7 @@ export class CertidoesScraperService {
           );
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
-            page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
+            page.locator('#botao-emitir').click(),
           ]);
 
           // BUG REAL encontrado nesta sessao: textContent('body') inclui o
@@ -377,7 +376,17 @@ export class CertidoesScraperService {
           // rejeitado" independente do resultado real. innerText respeita
           // renderizacao e exclui <script>/<style>, como os scripts de
           // teste desta sessao ja usavam corretamente.
-          const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          //
+          // Site novo (09/2026) emite de forma assíncrona: o texto logo
+          // após o submit é "Aguarde a emissão da certidão..." — sem esse
+          // polling (mesmo padrão do CND Federal), a leitura única caía
+          // sempre no fallback "resposta não reconhecida" mesmo quando a
+          // emissão só ainda não tinha terminado de processar no servidor.
+          let texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          for (let espera = 0; espera < 8 && /aguarde/i.test(texto); espera++) {
+            await page.waitForTimeout(1_500);
+            texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          }
           const resultado = this.parseCndt(texto);
           this.logger.log(`CNDT tentativa ${tentativa}: status=${resultado.status} mensagem="${resultado.mensagem}" texto="${texto.slice(0, 300)}"`);
 
@@ -388,7 +397,7 @@ export class CertidoesScraperService {
             // (revela redirect por sessao expirada) + se o campo de CNPJ
             // ainda tem o valor preenchido (revela reset de formulario).
             const urlAtual = page.url();
-            const cnpjAindaPreenchido = await page.locator('#gerarCertidaoForm\\:cpfCnpj').inputValue().catch(() => '(erro ao ler)');
+            const cnpjAindaPreenchido = await page.locator('#cpfCnpj').inputValue().catch(() => '(erro ao ler)');
             this.logger.warn(
               `CNDT 2captcha tentativa ${tentativa}: CAPTCHA rejeitado pelo site (resposta "${respostaCaptcha}"). ` +
               `url_apos_submit="${urlAtual}" cnpj_ainda_preenchido="${cnpjAindaPreenchido}" ` +
@@ -403,6 +412,7 @@ export class CertidoesScraperService {
           if (resultado.status === 'REGULAR' || resultado.status === 'IRREGULAR') {
             await page.waitForTimeout(1_500); // dá tempo do stream do download terminar
             resultado.urlArquivo = await this.gerarPdfCndt(downloadBuffer, cnpjLimpo);
+            if (!resultado.validade && downloadBuffer) resultado.validade = await this.extrairValidadeDoPdf(downloadBuffer);
           }
 
           return resultado;
@@ -441,16 +451,16 @@ export class CertidoesScraperService {
 
       for (let tentativa = 1; tentativa <= 3; tentativa++) {
         try {
-          await page.goto('https://cndt-certidao.tst.jus.br/gerarCertidao.faces', {
+          await page.goto('https://cndt-certidao.tst.jus.br/gerarCertidao', {
             waitUntil: 'networkidle',
             timeout: 30_000,
           });
 
-          await page.locator('#gerarCertidaoForm\\:cpfCnpj').fill(cnpjLimpo);
+          await page.locator('#cpfCnpj').fill(cnpjLimpo);
 
-          await page.locator('button:has-text("Ouvir")').click();
+          await page.locator('#botao-ouvir-captcha').click();
           await page.waitForTimeout(500);
-          const audioSrc = await page.locator('#idAudioCaptcha').getAttribute('src') ?? '';
+          const audioSrc = await page.locator('#captcha-audio').getAttribute('src') ?? '';
 
           if (!audioSrc) {
             this.logger.warn(`CNDT Whisper tentativa ${tentativa}: áudio CAPTCHA não disponível.`);
@@ -465,21 +475,19 @@ export class CertidoesScraperService {
             continue;
           }
 
-          await page.locator('#idCampoResposta').fill(respostaCaptcha.toLowerCase());
+          await page.locator('#captcha-resposta').fill(respostaCaptcha.toLowerCase());
           await Promise.all([
             page.waitForResponse((r) => r.url().includes('tst.jus.br'), { timeout: 20_000 }),
-            page.locator('#gerarCertidaoForm\\:btnEmitirCertidao').click(),
+            page.locator('#botao-emitir').click(),
           ]);
 
-          // BUG REAL encontrado nesta sessao: textContent('body') inclui o
-          // texto de dentro de <script> tags, e o JS da propria pagina do
-          // TST tem "idUrlServletSoundCaptcha" (nome de elemento) -- ou seja
-          // t.includes('captcha') em parseCndt() batia SEMPRE, em qualquer
-          // carga de pagina, classificando toda resposta como "CAPTCHA
-          // rejeitado" independente do resultado real. innerText respeita
-          // renderizacao e exclui <script>/<style>, como os scripts de
-          // teste desta sessao ja usavam corretamente.
-          const texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          // Ver comentário equivalente em consultarCndtCom2captcha: emissão
+          // assíncrona no site novo, precisa de polling do "Aguarde...".
+          let texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          for (let espera = 0; espera < 8 && /aguarde/i.test(texto); espera++) {
+            await page.waitForTimeout(1_500);
+            texto = (await page.innerText('body') ?? '').replace(/\s+/g, ' ');
+          }
           const resultado = this.parseCndt(texto);
           this.logger.log(`CNDT tentativa ${tentativa}: status=${resultado.status} mensagem="${resultado.mensagem}" texto="${texto.slice(0, 300)}"`);
 
@@ -491,6 +499,7 @@ export class CertidoesScraperService {
           if (resultado.status === 'REGULAR' || resultado.status === 'IRREGULAR') {
             await page.waitForTimeout(1_500); // dá tempo do stream do download terminar
             resultado.urlArquivo = await this.gerarPdfCndt(downloadBuffer, cnpjLimpo);
+            if (!resultado.validade && downloadBuffer) resultado.validade = await this.extrairValidadeDoPdf(downloadBuffer);
           }
 
           return resultado;
@@ -724,6 +733,20 @@ export class CertidoesScraperService {
     }
 
     return { status: 'INDISPONIVEL', validade: null, mensagem: 'CNDT TST: resposta não reconhecida.' };
+  }
+
+  // O texto da página após a emissão não traz mais a validade (site novo,
+  // 09/2026) — só o PDF baixado tem "Validade: DD/MM/AAAA". Sem rede, sem
+  // custo: só reaproveita o buffer que já baixamos pra fazer upload.
+  private async extrairValidadeDoPdf(downloadBuffer: Buffer): Promise<string | null> {
+    try {
+      const parser = new PDFParse({ data: downloadBuffer });
+      const { text } = await parser.getText();
+      return this.extrairData(text);
+    } catch (err) {
+      this.logger.warn(`CNDT: não foi possível ler validade do PDF: ${err}`);
+      return null;
+    }
   }
 
   private async gerarPdfCndt(downloadBuffer: Buffer | null, cnpjLimpo: string): Promise<string | null> {
@@ -2196,6 +2219,14 @@ export class CertidoesScraperService {
     const matchValidade = texto.match(/v[aá]lid[oa]\s+at[eé]\D{0,20}(\d{2})\/(\d{2})\/(\d{4})/i);
     if (matchValidade) {
       const [, d, m, y] = matchValidade;
+      return `${y}-${m}-${d}`;
+    }
+    // Idem, mas pro rótulo "Validade: DD/MM/AAAA" (ex: CNDT/TST) — sem essa
+    // âncora, o fallback genérico abaixo pegava a data de "Expedição" que
+    // aparece antes no texto do PDF, não a validade de fato.
+    const matchValidadeDoisPontos = texto.match(/validade\s*:\s*(\d{2})\/(\d{2})\/(\d{4})/i);
+    if (matchValidadeDoisPontos) {
+      const [, d, m, y] = matchValidadeDoisPontos;
       return `${y}-${m}-${d}`;
     }
     // Tenta DD/MM/AAAA
