@@ -244,6 +244,26 @@ export class CertidoesService {
     return item;
   }
 
+  // CND Federal e Dívida Ativa da União são a mesma certidão (CND da
+  // Receita + PGFN) — o obterScrapers() já aponta os dois pro mesmo scraper.
+  // Uma emissão só cobre os dois tipos; consultar cada um separado emitiria
+  // a mesma certidão duas vezes (~20s e uma chamada extra à Receita à toa).
+  async consultarFederalEDividaAtiva(cnpj: string): Promise<ChecklistItem[]> {
+    const empresa = await this.resolverEmpresa(cnpj);
+    const sanitized = sanitizeCnpj(cnpj);
+    const resultado = await this.scraper.consultarCndFederal(sanitized);
+    const novoStatus = resultado.status === 'REGULAR'     ? CertidaoStatus.REGULAR
+                     : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
+                     : CertidaoStatus.INDISPONIVEL;
+
+    const tipos = [CertidaoTipo.CND_FEDERAL, CertidaoTipo.DIVIDA_ATIVA];
+    for (const tipo of tipos) {
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
+    }
+
+    return (await this.checklist(cnpj)).filter((c) => tipos.includes(c.tipo));
+  }
+
   async anexarPdf(
     certidaoId: string,
     file: Express.Multer.File,

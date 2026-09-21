@@ -1,13 +1,15 @@
-// Executor local — roda FGTS/CRF e CND Federal a partir desta máquina em vez
-// do Render, pra usar o IP residencial (não datacenter, não deve carregar o
-// mesmo estigma que bloqueia o Render na Caixa) e o Chrome real local (com
-// GPU/hardware de verdade, necessário pra passar a atestação PAT do hCaptcha
-// da Receita — ver o comentário grande em certidoes-scraper.service.ts sobre
-// consultarCndFederalHeadedLocal).
+// Executor local — roda FGTS/CRF, CND Federal e Dívida Ativa a partir de uma
+// máquina com IP residencial. A Receita rejeita com erro 023 qualquer
+// tentativa vinda de IP de datacenter (Render ou VPS), com ou sem browser
+// headed — confirmado em 18-21/09/2026: do VPS deu 023 em todas as
+// tentativas, de IP residencial emitiu em ~20s. Ver o comentário grande em
+// certidoes-scraper.service.ts sobre consultarCndFederalHeadedLocal.
 //
-// Uso manual:  cd backend && npx ts-node src/local-runner.ts
-// Uso agendado: configurado via Windows Task Scheduler (tarefa
-// "cnpj-radar-local-runner"), que chama esse mesmo comando periodicamente.
+// Ferramenta manual de apoio, não é a solução pro produto (clientes do
+// serviço não têm como rodar isso na máquina deles).
+//
+// Uso:  cd backend && npm run local-runner
+//       (LOCAL_RUNNER_CNPJ=<cnpj> restringe a uma empresa)
 //
 // Escreve direto no mesmo banco de produção que o Render usa (DATABASE_URL
 // do .env local já aponta pra lá) — os resultados aparecem no painel normal,
@@ -32,7 +34,11 @@ import { CertidoesService } from './certidoes/certidoes.service';
 import { Empresa } from './cnpj/entities/empresa.entity';
 import { CertidaoTipo } from './database/entities/certidao.entity';
 
-const TIPOS_LOCAIS = [CertidaoTipo.FGTS_CRF, CertidaoTipo.CND_FEDERAL];
+// CND Federal e Dívida Ativa são a mesma certidão: uma emissão grava os dois.
+const TAREFAS_LOCAIS: { nome: string; rodar: (svc: CertidoesService, cnpj: string) => Promise<{ tipo: string; status: string }[]> }[] = [
+  { nome: 'FGTS_CRF', rodar: async (svc, cnpj) => [await svc.consultarUmTipo(cnpj, CertidaoTipo.FGTS_CRF)] },
+  { nome: 'CND_FEDERAL+DIVIDA_ATIVA', rodar: (svc, cnpj) => svc.consultarFederalEDividaAtiva(cnpj) },
+];
 
 function log(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -62,13 +68,13 @@ async function main() {
     let falhas = 0;
 
     for (const empresa of empresas) {
-      for (const tipo of TIPOS_LOCAIS) {
+      for (const tarefa of TAREFAS_LOCAIS) {
         const inicio = Date.now();
         try {
-          log(`${empresa.razaoSocial} (${empresa.cnpj}) — ${tipo}...`);
-          const item = await certidoesService.consultarUmTipo(empresa.cnpj, tipo);
+          log(`${empresa.razaoSocial} (${empresa.cnpj}) — ${tarefa.nome}...`);
+          const itens = await tarefa.rodar(certidoesService, empresa.cnpj);
           const seg = ((Date.now() - inicio) / 1000).toFixed(1);
-          log(`  -> ${item.status} (${seg}s)`);
+          log(`  -> ${itens.map((i) => `${i.tipo}=${i.status}`).join(', ')} (${seg}s)`);
           ok++;
         } catch (err) {
           const seg = ((Date.now() - inicio) / 1000).toFixed(1);
