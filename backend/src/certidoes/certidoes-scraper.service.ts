@@ -2045,16 +2045,26 @@ export class CertidoesScraperService {
         }).catch(() => {});
       });
 
-      await page.goto(PAGE_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+      await page.goto(PAGE_URL, { waitUntil: 'load', timeout: 45_000 });
+      // Site é uma SPA: clicar antes da hidratação perde o clique em silêncio
+      // (confirmado em 21/09/2026 — 2 de 3 rodadas seguidas falhavam com
+      // "campo niContribuinte não encontrado" mesmo com a página normal).
+      await page.waitForTimeout(3_000);
 
       try {
         await page.getByRole('button', { name: 'Aceitar' }).click({ timeout: 3_000 });
       } catch { /* banner pode não aparecer se o perfil já aceitou antes */ }
 
-      await page.getByText('Pessoa Jurídica', { exact: true }).click({ timeout: 8_000 });
+      const campoCnpj = page.locator('input[name="niContribuinte"]');
+      for (let clique = 1; clique <= 3; clique++) {
+        await page.getByText('Pessoa Jurídica', { exact: true }).click({ timeout: 15_000 });
+        const apareceu = await campoCnpj.waitFor({ state: 'visible', timeout: 8_000 }).then(() => true).catch(() => false);
+        if (apareceu) break;
+        if (clique === 3) throw new Error('Formulário de CNPJ não apareceu após 3 cliques em "Pessoa Jurídica".');
+        await page.waitForTimeout(2_000);
+      }
       await page.waitForTimeout(800);
 
-      const campoCnpj = page.locator('input[name="niContribuinte"]');
       await campoCnpj.click();
       await page.keyboard.press('Control+A');
       await page.keyboard.press('Delete');
@@ -2095,7 +2105,11 @@ export class CertidoesScraperService {
       const textoLower = texto.toLowerCase();
 
       if (textoLower.includes('emitida com sucesso')) {
-        const validade = this.extrairData(texto);
+        // A tela só diz "emitida com sucesso" — a validade ("Válida até
+        // DD/MM/AAAA") só existe no PDF. Sem isso ficava null e o alerta de
+        // vencimento nunca disparava pra CND Federal.
+        await page.waitForTimeout(1_500); // dá tempo do stream do download terminar
+        const validade = (capturedPdf ? await this.extrairValidadeDoPdf(capturedPdf) : null) ?? this.extrairData(texto);
         return {
           status: 'REGULAR',
           validade,
