@@ -24,6 +24,7 @@ export interface ConsultasPorMes {
 export interface DashboardDto {
   totalConsultasMes: number;
   totalLeads: number;
+  leadsAtivos: number;
   totalClientes: number;
   taxaConversaoLeads: number;
   oportunidadesParadas: number;
@@ -58,10 +59,11 @@ export class DashboardService {
         SELECT COUNT(*)::int AS total FROM consultas WHERE consultado_em >= $1
       `, [inicioMes]),
 
-      this.ds.query<{ total: string; clientes: string }[]>(`
+      this.ds.query<{ total: string; clientes: string; ativos: string }[]>(`
         SELECT
           COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE status = 'convertido')::int AS clientes
+          COUNT(*) FILTER (WHERE status = 'convertido')::int AS clientes,
+          COUNT(*) FILTER (WHERE status NOT IN ('convertido','descartado'))::int AS ativos
         FROM leads
       `),
 
@@ -84,7 +86,7 @@ export class DashboardService {
           TO_CHAR(consultado_em, 'YYYY-MM') AS mes,
           COUNT(*)::int                      AS total
         FROM consultas
-        WHERE consultado_em >= NOW() - INTERVAL '6 months'
+        WHERE consultado_em >= date_trunc('month', NOW()) - INTERVAL '5 months'
         GROUP BY mes
         ORDER BY mes ASC
       `),
@@ -107,7 +109,18 @@ export class DashboardService {
     const tarefasPendentes = await this.tarefasService.contarPendentes();
 
     const totalLeads    = Number(leadsRaw[0]?.total    ?? 0);
+    const leadsAtivos   = Number(leadsRaw[0]?.ativos   ?? 0);
     const totalClientes = Number(leadsRaw[0]?.clientes ?? 0) + Number(clientesRaw[0]?.total ?? 0);
+
+    // Série fixa dos últimos 6 meses (mês atual + 5 anteriores), com zero-fill: meses sem
+    // consultas somem no GROUP BY e distorceriam o gráfico ("buracos" e barras fora de ordem).
+    const meses6: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
+      meses6.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    const mapConsultas = new Map(consultasPorMesRaw.map(r => [r.mes, Number(r.total)]));
+    const consultasPorMes = meses6.map(mes => ({ mes, total: mapConsultas.get(mes) ?? 0 }));
 
     // top consultores: quem mais criou consultas no mês (via usuario_id na tabela consultas se existir, senão placeholder)
     const topConsultoresRaw = await this.ds.query<{ nome: string; total: string }[]>(`
@@ -125,12 +138,13 @@ export class DashboardService {
     return {
       totalConsultasMes:        Number(consultasMesRaw[0]?.total        ?? 0),
       totalLeads,
+      leadsAtivos,
       totalClientes,
       taxaConversaoLeads:       totalLeads > 0 ? Math.round((Number(leadsRaw[0]?.clientes ?? 0) / totalLeads) * 100) : 0,
       oportunidadesParadas:     Number(oportunidadesRaw[0]?.total       ?? 0),
       alertasCertidoesCriticos: Number(alertasRaw[0]?.total             ?? 0),
       tarefasPendentes,
-      consultasPorMes:          consultasPorMesRaw.map(r => ({ mes: r.mes, total: Number(r.total) })),
+      consultasPorMes,
       topCnaes:                 topCnaesRaw.map(r => ({ codigo: r.codigo, descricao: r.descricao ?? r.codigo, total: Number(r.total) })),
       topConsultores:           topConsultoresRaw.map(r => ({ nome: r.nome, total: Number(r.total) })),
     };

@@ -763,7 +763,7 @@ function App() {
         <main className="flex-1 overflow-y-auto p-8 space-y-5">
 
           {/* Vista Dashboard */}
-          {vista === 'dashboard' && <DashboardTab />}
+          {vista === 'dashboard' && <DashboardTab onNavegar={(v) => setVista(v as Vista)} />}
 
           {/* Vista Tarefas */}
           {vista === 'tarefas'    && <TarefasTab />}

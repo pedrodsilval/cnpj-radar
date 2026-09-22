@@ -6,6 +6,7 @@ import { apiFetch } from './auth'
 interface DashboardData {
   totalConsultasMes: number
   totalLeads: number
+  leadsAtivos: number
   totalClientes: number
   taxaConversaoLeads: number
   oportunidadesParadas: number
@@ -27,23 +28,36 @@ function formatarMes(yyyyMM: string): string {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function MetricCard({
-  label, valor, sub, destaque = false, alerta = false,
+  label, valor, sub, destaque = false, alerta = false, onClick,
 }: {
-  label: string; valor: string | number; sub?: string; destaque?: boolean; alerta?: boolean
+  label: string; valor: string | number; sub?: string
+  destaque?: boolean; alerta?: boolean; onClick?: () => void
 }) {
-  return (
-    <div className={`rounded-2xl border p-5 ${
-      alerta   ? 'bg-danger/5 border-danger/20'   :
-      destaque ? 'bg-primary/5 border-primary/20' :
-                 'bg-white border-gray-100'
-    }`}>
-      <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-1">{label}</p>
+  const base = `rounded-2xl border p-5 text-left w-full ${
+    alerta   ? 'bg-danger/5 border-danger/20'   :
+    destaque ? 'bg-primary/5 border-primary/20' :
+               'bg-white border-gray-100'
+  }`
+  // Card clicável vira botão real: cursor, hover, foco por teclado e uma seta discreta.
+  const interativo = onClick
+    ? ' cursor-pointer transition-all hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
+    : ''
+  const conteudo = (
+    <>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">{label}</p>
+        {onClick && <span aria-hidden className="text-gray-300 text-sm leading-none">›</span>}
+      </div>
       <p className={`font-display font-black text-3xl leading-none ${
         alerta ? 'text-danger' : destaque ? 'text-primary' : 'text-depth'
       }`}>{valor}</p>
       {sub && <p className="text-xs text-gray-400 font-body mt-1">{sub}</p>}
-    </div>
+    </>
   )
+  if (onClick) {
+    return <button type="button" onClick={onClick} className={base + interativo}>{conteudo}</button>
+  }
+  return <div className={base}>{conteudo}</div>
 }
 
 function MiniBarChart({ data }: { data: { mes: string; total: number }[] }) {
@@ -67,7 +81,7 @@ function MiniBarChart({ data }: { data: { mes: string; total: number }[] }) {
 
 // ─── DashboardTab ─────────────────────────────────────────────────────────────
 
-export function DashboardTab() {
+export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => void }) {
   const [dados, setDados]       = useState<DashboardData | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro]         = useState<string | null>(null)
@@ -99,15 +113,21 @@ export function DashboardTab() {
         <p className="text-gray-400 font-body text-sm mt-0.5">Visão consolidada do mês atual.</p>
       </div>
 
-      {/* Métricas principais */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <MetricCard label="Consultas (mês)" valor={dados.totalConsultasMes} />
-        <MetricCard label="Leads ativos"    valor={dados.totalLeads} />
+      {/* Linha 1 — risco e ação: o que precisa de você hoje (destaque no topo) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <MetricCard
-          label="Conversão"
-          valor={`${dados.taxaConversaoLeads}%`}
-          sub={`${dados.totalClientes} cliente${dados.totalClientes !== 1 ? 's' : ''}`}
-          destaque={dados.taxaConversaoLeads >= 20}
+          label="Certidões críticas"
+          valor={dados.alertasCertidoesCriticos}
+          sub={dados.alertasCertidoesCriticos > 0 ? 'irregular ou vence em 7 dias' : 'tudo em dia'}
+          alerta={dados.alertasCertidoesCriticos > 0}
+          onClick={onNavegar ? () => onNavegar('alertas') : undefined}
+        />
+        <MetricCard
+          label="Tarefas pendentes"
+          valor={dados.tarefasPendentes}
+          sub={dados.tarefasPendentes > 0 ? 'pendente ou em andamento' : 'nada pendente'}
+          alerta={dados.tarefasPendentes > 0}
+          onClick={onNavegar ? () => onNavegar('tarefas') : undefined}
         />
         <MetricCard
           label="Oport. paradas"
@@ -117,26 +137,32 @@ export function DashboardTab() {
         />
       </div>
 
-      {/* Alertas rápidos */}
-      {(dados.alertasCertidoesCriticos > 0 || dados.tarefasPendentes > 0) && (
-        <div className="grid grid-cols-2 gap-3">
-          {dados.alertasCertidoesCriticos > 0 && (
-            <MetricCard
-              label="Certidões críticas"
-              valor={dados.alertasCertidoesCriticos}
-              sub="irregular ou vence em 7 dias"
-              alerta
-            />
-          )}
-          {dados.tarefasPendentes > 0 && (
-            <MetricCard
-              label="Tarefas pendentes"
-              valor={dados.tarefasPendentes}
-              sub="pendente ou em andamento"
-            />
-          )}
-        </div>
-      )}
+      {/* Linha 2 — comercial */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <MetricCard
+          label="Leads ativos"
+          valor={dados.leadsAtivos}
+          sub={dados.leadsAtivos !== dados.totalLeads ? `${dados.totalLeads} no total` : undefined}
+        />
+        <MetricCard
+          label="Conversão"
+          valor={dados.totalLeads === 0 ? '—' : `${dados.taxaConversaoLeads}%`}
+          sub={
+            dados.totalLeads === 0
+              ? 'sem leads ainda'
+              : dados.totalClientes > 0
+                ? `${dados.totalClientes} cliente${dados.totalClientes !== 1 ? 's' : ''}`
+                : 'nenhum convertido ainda'
+          }
+          destaque={dados.totalLeads > 0 && dados.taxaConversaoLeads >= 20}
+          onClick={onNavegar ? () => onNavegar('clientes') : undefined}
+        />
+        <MetricCard
+          label="Consultas (mês)"
+          valor={dados.totalConsultasMes}
+          onClick={onNavegar ? () => onNavegar('relatorios') : undefined}
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
@@ -182,9 +208,20 @@ export function DashboardTab() {
         {/* Top consultores */}
         {dados.topConsultores.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 p-5">
-            <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-3">
-              Consultores mais ativos (30 dias)
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
+                Consultores mais ativos (30 dias)
+              </h3>
+              {onNavegar && (
+                <button
+                  type="button"
+                  onClick={() => onNavegar('relatorios')}
+                  className="text-xs font-display font-bold text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
+                >
+                  Relatório ›
+                </button>
+              )}
+            </div>
             <ol className="space-y-2">
               {dados.topConsultores.map((c, i) => (
                 <li key={c.nome} className="flex items-center gap-3">
