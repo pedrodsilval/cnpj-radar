@@ -17,6 +17,7 @@ import { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
 import { CertidoesScraperService } from './certidoes-scraper.service';
 import { Anexo } from '../database/entities/anexo.entity';
 import { Lead } from '../leads/entities/lead.entity';
+import { CertidaoJob, CertidaoJobStatus } from './entities/certidao-job.entity';
 
 export interface ChecklistItem {
   tipo: CertidaoTipo;
@@ -50,6 +51,8 @@ export class CertidoesService {
     private readonly empresaRepo: Repository<Empresa>,
     @InjectRepository(Lead)
     private readonly leadRepo: Repository<Lead>,
+    @InjectRepository(CertidaoJob)
+    private readonly jobRepo: Repository<CertidaoJob>,
     private readonly scraper: CertidoesScraperService,
     private readonly storage: SupabaseStorageService,
   ) {}
@@ -262,6 +265,85 @@ export class CertidoesService {
     }
 
     return (await this.checklist(cnpj)).filter((c) => tipos.includes(c.tipo));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fila de jobs pra CND Federal/Dívida Ativa via extensão de Chrome — o
+  // servidor não consegue rodar isso (hCaptcha da Receita bloqueia qualquer
+  // origem de datacenter, ver [[projeto-cnd-federal-local-pendente]] na
+  // memória do projeto). A extensão roda no navegador real do usuário, pega
+  // o job daqui, emite a certidão do jeito que já sabemos que funciona
+  // (perfil aquecido, IP residencial) e devolve o PDF pra cá.
+  // ---------------------------------------------------------------------------
+
+  async criarJobCndFederal(cnpj: string, usuarioId: string): Promise<CertidaoJob> {
+    const empresa = await this.resolverEmpresa(cnpj);
+    const sanitized = sanitizeCnpj(cnpj);
+
+    // Não empilha job duplicado pro mesmo CNPJ enquanto o anterior não
+    // terminar — devolve o que já existe em vez de criar outro.
+    const existente = await this.jobRepo.findOne({
+      where: [
+        { empresaId: empresa.id, status: CertidaoJobStatus.PENDENTE },
+        { empresaId: empresa.id, status: CertidaoJobStatus.EM_ANDAMENTO },
+      ],
+      order: { criadoEm: 'DESC' },
+    });
+    if (existente) return existente;
+
+    const job = this.jobRepo.create({ empresaId: empresa.id, cnpj: sanitized, solicitadoPor: usuarioId });
+    return this.jobRepo.save(job);
+  }
+
+  async buscarJob(jobId: string): Promise<CertidaoJob> {
+    const job = await this.jobRepo.findOne({ where: { id: jobId } });
+    if (!job) throw new NotFoundException('Job não encontrado.');
+    return job;
+  }
+
+  // Chamado pela extensão fazendo polling — pega o job pendente mais antigo
+  // da fila (não é por usuário: é o escritório inteiro compartilhando a
+  // mesma fila, qualquer extensão pareada pode assumir qualquer job).
+  async proximoJobCndFederal(usuarioId: string): Promise<{ jobId: string; cnpj: string } | null> {
+    const job = await this.jobRepo.findOne({ where: { status: CertidaoJobStatus.PENDENTE }, order: { criadoEm: 'ASC' } });
+    if (!job) return null;
+
+    job.status = CertidaoJobStatus.EM_ANDAMENTO;
+    job.assumidoPor = usuarioId;
+    job.assumidoEm = new Date();
+    await this.jobRepo.save(job);
+
+    return { jobId: job.id, cnpj: job.cnpj };
+  }
+
+  async resolverJobCndFederal(
+    jobId: string,
+    status: 'REGULAR' | 'IRREGULAR' | 'INDISPONIVEL',
+    mensagem: string,
+    pdfBuffer: Buffer | null,
+  ): Promise<void> {
+    const job = await this.buscarJob(jobId);
+
+    let validade: string | null = null;
+    let urlArquivo: string | null = null;
+    if (pdfBuffer) {
+      urlArquivo = await this.storage.uploadPdf(pdfBuffer, `cnd-federal-${job.cnpj}`);
+      validade = await this.scraper.extrairValidadeDoPdf(pdfBuffer);
+    }
+
+    const novoStatus = status === 'REGULAR'   ? CertidaoStatus.REGULAR
+                      : status === 'IRREGULAR' ? CertidaoStatus.IRREGULAR
+                                                : CertidaoStatus.INDISPONIVEL;
+
+    // Mesma emissão cobre os dois tipos (ver consultarFederalEDividaAtiva).
+    for (const tipo of [CertidaoTipo.CND_FEDERAL, CertidaoTipo.DIVIDA_ATIVA]) {
+      await this.upsertCertidao(job.empresaId, job.cnpj, tipo, novoStatus, validade, CertidaoOrigem.AUTOMATICO, urlArquivo, mensagem);
+    }
+
+    job.status = status === 'INDISPONIVEL' ? CertidaoJobStatus.ERRO : CertidaoJobStatus.CONCLUIDO;
+    job.resultadoStatus = status;
+    job.resultadoMensagem = mensagem;
+    await this.jobRepo.save(job);
   }
 
   async anexarPdf(

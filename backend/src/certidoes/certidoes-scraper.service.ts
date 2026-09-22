@@ -738,7 +738,10 @@ export class CertidoesScraperService {
   // O texto da página após a emissão não traz mais a validade (site novo,
   // 09/2026) — só o PDF baixado tem "Validade: DD/MM/AAAA". Sem rede, sem
   // custo: só reaproveita o buffer que já baixamos pra fazer upload.
-  private async extrairValidadeDoPdf(downloadBuffer: Buffer): Promise<string | null> {
+  // Público — reaproveitado pelo CertidoesService pra resolver jobs da fila
+  // (certidão emitida pela extensão de Chrome, PDF chega pronto pela API,
+  // sem passar pelo browser headed local).
+  async extrairValidadeDoPdf(downloadBuffer: Buffer): Promise<string | null> {
     try {
       const parser = new PDFParse({ data: downloadBuffer });
       const { text } = await parser.getText();
@@ -2044,6 +2047,22 @@ export class CertidoesScraperService {
           stream.on('end', () => { capturedPdf = Buffer.concat(chunks); });
         }).catch(() => {});
       });
+
+      // "Aquecimento" do perfil — navega por sites reais antes de ir na
+      // Receita. Reproduz o único teste controlado que já diferenciou
+      // sucesso de erro 023 nesse hCaptcha: em 03/09/2026 (madrugada,
+      // api_captcha/diagnostico_hcaptcha_perfil_persistente.py), o mesmo
+      // perfil persistente SEM esse passo deu 023 duas vezes (02:50 e
+      // 02:58, testes antes/depois) e COM esse passo passou de primeira
+      // (02:54) — únicas 3 variáveis controladas, resultado limpo. Nunca
+      // tinha sido replicado desde então; o fluxo integrado sempre foi
+      // direto pra Receita sem aquecer.
+      for (const url of ['https://www.google.com', 'https://www.uol.com.br', 'https://www.gov.br']) {
+        try {
+          await page.goto(url, { waitUntil: 'load', timeout: 15_000 });
+          await page.waitForTimeout(1_500);
+        } catch { /* aquecimento é best-effort — um site fora do ar não deve travar a consulta */ }
+      }
 
       await page.goto(PAGE_URL, { waitUntil: 'load', timeout: 45_000 });
       // Site é uma SPA: clicar antes da hidratação perde o clique em silêncio

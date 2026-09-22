@@ -348,6 +348,39 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cnpj])
 
+  // CND Federal (via 2captcha/servidor) sempre esbarra no bloqueio de bot do
+  // hCaptcha da Receita quando roda de datacenter — não tem solução do lado
+  // do servidor (ver memória do projeto). Em vez de gastar 2captcha numa
+  // tentativa fadada a falhar, entra numa fila que a extensão de Chrome
+  // instalada no navegador do usuário consome, emitindo de verdade com IP
+  // residencial. Dívida Ativa é a mesma certidão — uma emissão só resolve
+  // os dois tipos, então não cria job duplicado pra ela.
+  async function consultarViaJob(): Promise<void> {
+    const res = await apiFetch(`/certidoes/jobs/${cnpj}`, { method: 'POST' })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      setErroAuto((json as { message?: string }).message ?? 'Erro ao criar job de CND Federal.')
+      return
+    }
+    const job = await res.json() as { id: string; status: string }
+
+    // Espera um pouco caso a extensão já esteja de olho na fila — sem travar
+    // o resto da consulta automática se ela demorar (o job fica na fila e
+    // resolve em segundo plano; o resultado aparece na próxima vez que a
+    // tela recarregar o checklist).
+    for (let tentativa = 0; tentativa < 5; tentativa++) {
+      await new Promise(r => setTimeout(r, 3_000))
+      const statusRes = await apiFetch(`/certidoes/jobs/${job.id}`)
+      if (!statusRes.ok) break
+      const atual = await statusRes.json() as { status: string }
+      if (atual.status === 'CONCLUIDO' || atual.status === 'ERRO') {
+        await carregar()
+        return
+      }
+    }
+    setErroAuto('CND Federal/Dívida Ativa: job criado, aguardando a extensão de Chrome processar (pode levar um tempo — recarregue a tela depois).')
+  }
+
   async function consultarAuto() {
     setConsultandoAuto(true)
     setErroAuto(null)
@@ -358,7 +391,15 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
     const tipos = itens.map(i => i.tipo)
     let falhaDeRede = false
     for (const tipo of tipos) {
+      // Dívida Ativa é resolvida junto com o job de CND Federal — não
+      // dispara consulta própria (evita duplicar emissão/job).
+      if (tipo === 'DIVIDA_ATIVA') continue
+
       try {
+        if (tipo === 'CND_FEDERAL') {
+          await consultarViaJob()
+          continue
+        }
         const res = await apiFetch(`/certidoes/consultar/${cnpj}/${tipo}`, { method: 'POST' })
         if (!res.ok) {
           const json = await res.json().catch(() => ({}))

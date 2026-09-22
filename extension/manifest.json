@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "CND Federal — Everest Contabilidade",
+  "version": "1.0.0",
+  "description": "Emite CND Federal e Dívida Ativa automaticamente a partir do seu navegador, pra empresas cadastradas no Radar Empresarial.",
+  "permissions": ["storage", "alarms", "tabs", "scripting"],
+  "host_permissions": [
+    "https://radar.everestcontabilidade.com/*",
+    "https://servicos.receitafederal.gov.br/*",
+    "https://www.google.com/*",
+    "https://www.uol.com.br/*",
+    "https://www.gov.br/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://radar.everestcontabilidade.com/*"],
+      "js": ["content-pareamento.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CND Federal — Everest"
+  }
+}

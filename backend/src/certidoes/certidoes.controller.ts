@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Request, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { extname } from 'path';
 import { CertidoesService } from './certidoes.service';
-import type { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
+import type { RegistrarDto, AtualizarStatusDto, ResolverJobDto } from './certidoes.dto';
 import { CertidaoTipo } from '../database/entities/certidao.entity';
 @Controller('certidoes')
 export class CertidoesController {
@@ -58,6 +58,45 @@ export class CertidoesController {
   @Post('consultar/:cnpj/:tipo')
   consultarUmTipo(@Param('cnpj') cnpj: string, @Param('tipo') tipo: CertidaoTipo) {
     return this.service.consultarUmTipo(cnpj, tipo);
+  }
+
+  // Fila de jobs da extensão de Chrome — CND Federal/Dívida Ativa (ver
+  // certidoes.service.ts). "jobs/proximo" antes de "jobs/:id" (genérico).
+
+  @Post('jobs/:cnpj')
+  criarJob(@Param('cnpj') cnpj: string, @Request() req: { user: { id: string } }) {
+    return this.service.criarJobCndFederal(cnpj, req.user.id);
+  }
+
+  @Get('jobs/proximo')
+  proximoJob(@Request() req: { user: { id: string } }) {
+    return this.service.proximoJobCndFederal(req.user.id);
+  }
+
+  @Get('jobs/:id')
+  buscarJob(@Param('id') id: string) {
+    return this.service.buscarJob(id);
+  }
+
+  @Post('jobs/:id/resultado')
+  @UseInterceptors(FileInterceptor('pdf', {
+    storage: memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const ext = extname(file.originalname).toLowerCase();
+      if (file.mimetype === 'application/pdf' && ext === '.pdf') {
+        cb(null, true);
+      } else {
+        cb(new Error('Apenas arquivos PDF são aceitos (.pdf).'), false);
+      }
+    },
+  }))
+  resolverJob(
+    @Param('id') id: string,
+    @Body() dto: ResolverJobDto,
+    @UploadedFile() pdf?: Express.Multer.File,
+  ) {
+    return this.service.resolverJobCndFederal(id, dto.status, dto.mensagem, pdf?.buffer ?? null);
   }
 
   @Patch(':id/status')

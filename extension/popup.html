@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { width: 280px; font-family: -apple-system, Segoe UI, sans-serif; padding: 14px; color: #1a1a1a; }
+  h1 { font-size: 14px; margin: 0 0 10px; }
+  .linha { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+  .ponto { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .ok { background: #10b981; }
+  .alerta { background: #f59e0b; }
+  .erro { background: #ef4444; }
+  .rotulo { color: #6b7280; }
+  .valor { font-weight: 600; }
+  button { width: 100%; margin-top: 10px; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px; background: #f9fafb; cursor: pointer; font-size: 12px; }
+  button:hover { background: #f3f4f6; }
+  button:disabled { opacity: .5; cursor: default; }
+  #msg { font-size: 11px; color: #6b7280; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>CND Federal — Everest</h1>
+  <div class="linha">
+    <span class="ponto" id="pontoPareamento"></span>
+    <span class="rotulo">Pareamento:</span>
+    <span class="valor" id="statusPareamento">—</span>
+  </div>
+  <div class="linha">
+    <span class="rotulo">Última tentativa:</span>
+    <span class="valor" id="ultimaExecucao">nunca</span>
+  </div>
+  <div class="linha">
+    <span class="rotulo">Último resultado:</span>
+    <span class="valor" id="ultimoResultado">—</span>
+  </div>
+  <button id="btnVerificar">Verificar fila agora</button>
+  <div id="msg"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

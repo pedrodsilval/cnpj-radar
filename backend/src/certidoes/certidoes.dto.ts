@@ -17,3 +17,8 @@ export interface AtualizarStatusDto {
   origem?: CertidaoOrigem;
   urlArquivo?: string;
 }
+
+export interface ResolverJobDto {
+  status: 'REGULAR' | 'IRREGULAR' | 'INDISPONIVEL';
+  mensagem: string;
+}
