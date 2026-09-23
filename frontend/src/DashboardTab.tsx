@@ -4,7 +4,9 @@ import { apiFetch } from './auth'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface DashboardData {
-  totalConsultasMes: number
+  periodoDias: number
+  consultasPeriodo: number
+  consultasDelta: number | null
   totalLeads: number
   leadsAtivos: number
   totalClientes: number
@@ -44,10 +46,11 @@ const PRIO_COR: Record<string, string> = { alta: 'bg-danger', media: 'bg-amber-4
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function MetricCard({
-  label, valor, sub, destaque = false, alerta = false, onClick,
+  label, valor, sub, destaque = false, alerta = false, onClick, delta,
 }: {
   label: string; valor: string | number; sub?: string
   destaque?: boolean; alerta?: boolean; onClick?: () => void
+  delta?: number | null   // variação %: >0 sobe (verde), <0 cai (vermelho)
 }) {
   const base = `rounded-2xl border p-5 text-left w-full ${
     alerta   ? 'bg-danger/5 border-danger/20'   :
@@ -64,9 +67,18 @@ function MetricCard({
         <p className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">{label}</p>
         {onClick && <span aria-hidden className="text-gray-300 text-sm leading-none">›</span>}
       </div>
-      <p className={`font-display font-black text-3xl leading-none ${
-        alerta ? 'text-danger' : destaque ? 'text-primary' : 'text-depth'
-      }`}>{valor}</p>
+      <div className="flex items-baseline gap-2">
+        <p className={`font-display font-black text-3xl leading-none ${
+          alerta ? 'text-danger' : destaque ? 'text-primary' : 'text-depth'
+        }`}>{valor}</p>
+        {delta !== undefined && delta !== null && (
+          <span className={`text-xs font-display font-bold ${
+            delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-danger' : 'text-gray-400'
+          }`}>
+            {delta > 0 ? '▲' : delta < 0 ? '▼' : '→'} {Math.abs(delta)}%
+          </span>
+        )}
+      </div>
       {sub && <p className="text-xs text-gray-400 font-body mt-1">{sub}</p>}
     </>
   )
@@ -201,6 +213,7 @@ function AcoesHoje({ acoes, onNavegar }: { acoes: AcoesData; onNavegar?: (vista:
 // ─── DashboardTab ─────────────────────────────────────────────────────────────
 
 export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => void }) {
+  const [dias, setDias]         = useState(30)
   const [dados, setDados]       = useState<DashboardData | null>(null)
   const [acoes, setAcoes]       = useState<AcoesData | null>(null)
   const [funil, setFunil]       = useState<FunilItem[]>([])
@@ -208,25 +221,27 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
   const [erro, setErro]         = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelado = false
     async function carregar() {
-      setCarregando(true)
       setErro(null)
       try {
-        // Resumo é obrigatório; ações e funil são best-effort (não derrubam o dashboard).
+        // Resumo segue o período; ações e funil são best-effort (não derrubam o dashboard).
         const [rd, ra, rf] = await Promise.all([
-          apiFetch('/dashboard'),
+          apiFetch(`/dashboard?dias=${dias}`),
           apiFetch('/dashboard/acoes').catch(() => null),
           apiFetch('/dashboard/funil-conversao').catch(() => null),
         ])
+        if (cancelado) return
         if (!rd.ok) { setErro('Não foi possível carregar o dashboard.'); return }
         setDados(await rd.json() as DashboardData)
         if (ra && ra.ok) setAcoes(await ra.json() as AcoesData)
         if (rf && rf.ok) setFunil(await rf.json() as FunilItem[])
-      } catch { setErro('Erro de rede.') }
-      finally { setCarregando(false) }
+      } catch { if (!cancelado) setErro('Erro de rede.') }
+      finally { if (!cancelado) setCarregando(false) }
     }
     void carregar()
-  }, [])
+    return () => { cancelado = true }
+  }, [dias])
 
   if (carregando) return <div className="py-20 text-center text-gray-400 text-sm font-body">Carregando dashboard…</div>
   if (erro) return <div className="py-10 text-center text-danger text-sm font-display font-bold" role="alert">⚠ {erro}</div>
@@ -235,10 +250,24 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
   return (
     <div className="space-y-6">
 
-      {/* Título */}
-      <div>
-        <h2 className="font-display font-black text-depth text-lg">Dashboard Executivo</h2>
-        <p className="text-gray-400 font-body text-sm mt-0.5">Visão consolidada do mês atual.</p>
+      {/* Título + seletor de período (aplica a Consultas, CNAEs e Consultores) */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="font-display font-black text-depth text-lg">Dashboard Executivo</h2>
+          <p className="text-gray-400 font-body text-sm mt-0.5">Visão consolidada da carteira.</p>
+        </div>
+        <div className="flex gap-1 bg-white border border-gray-100 rounded-xl p-1" role="group" aria-label="Período">
+          {[7, 30, 90].map(d => (
+            <button
+              key={d} type="button" onClick={() => setDias(d)}
+              className={`px-3 py-1 rounded-lg text-xs font-display font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                dias === d ? 'bg-primary text-white' : 'text-gray-500 hover:text-depth'
+              }`}
+            >
+              {d} dias
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Linha 1 — risco e ação: o que precisa de você hoje (destaque no topo) */}
@@ -286,8 +315,10 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
           onClick={onNavegar ? () => onNavegar('clientes') : undefined}
         />
         <MetricCard
-          label="Consultas (mês)"
-          valor={dados.totalConsultasMes}
+          label={`Consultas (${dados.periodoDias}d)`}
+          valor={dados.consultasPeriodo}
+          delta={dados.consultasDelta}
+          sub="vs. período anterior"
           onClick={onNavegar ? () => onNavegar('relatorios') : undefined}
         />
       </div>
@@ -308,7 +339,7 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
         {/* Top CNAEs */}
         <div className="bg-white rounded-2xl border border-gray-100 p-5">
           <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest mb-3">
-            CNAEs mais consultados (30 dias)
+            CNAEs mais consultados ({dados.periodoDias} dias)
           </h3>
           {dados.topCnaes.length === 0 ? (
             <p className="text-gray-300 text-sm font-body">Sem consultas no período.</p>
@@ -352,12 +383,12 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
           <Funil dados={funil} />
         </div>
 
-        {/* Top consultores */}
-        {dados.topConsultores.length > 0 && (
+        {/* Top consultores — só faz sentido com 2+ pessoas (S2) */}
+        {dados.topConsultores.length > 1 && (
           <div className="bg-white rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
-                Consultores mais ativos (30 dias)
+                Consultores mais ativos ({dados.periodoDias} dias)
               </h3>
               {onNavegar && (
                 <button

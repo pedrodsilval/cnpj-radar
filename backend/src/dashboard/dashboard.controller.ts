@@ -6,8 +6,10 @@ export class DashboardController {
   constructor(private readonly service: DashboardService) {}
 
   @Get()
-  resumo() {
-    return this.service.resumo();
+  resumo(@Query('dias') dias?: string) {
+    const permitidos = [7, 30, 90];
+    const d = permitidos.includes(Number(dias)) ? Number(dias) : 30;
+    return this.service.resumo(d);
   }
 
   @Get('funil-conversao')

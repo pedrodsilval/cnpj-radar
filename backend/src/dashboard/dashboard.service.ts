@@ -22,7 +22,9 @@ export interface ConsultasPorMes {
 }
 
 export interface DashboardDto {
-  totalConsultasMes: number;
+  periodoDias: number;
+  consultasPeriodo: number;
+  consultasDelta: number | null;   // variação % vs. janela anterior de mesmo tamanho (null = base 0)
   totalLeads: number;
   leadsAtivos: number;
   totalClientes: number;
@@ -48,9 +50,8 @@ export class DashboardService {
     private readonly tarefasService: TarefasService,
   ) {}
 
-  async resumo(): Promise<DashboardDto> {
+  async resumo(dias = 30): Promise<DashboardDto> {
     const agora = new Date();
-    const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString();
 
     const [
       consultasMesRaw,
@@ -61,9 +62,15 @@ export class DashboardService {
       consultasPorMesRaw,
       topCnaesRaw,
     ] = await Promise.all([
-      this.ds.query<{ total: string }[]>(`
-        SELECT COUNT(*)::int AS total FROM consultas WHERE consultado_em >= $1
-      `, [inicioMes]),
+      // Consultas na janela selecionada + na janela anterior de mesmo tamanho (p/ o delta).
+      this.ds.query<{ atual: string; anterior: string }[]>(`
+        SELECT
+          COUNT(*) FILTER (WHERE consultado_em >= NOW() - make_interval(days => $1))::int AS atual,
+          COUNT(*) FILTER (WHERE consultado_em >= NOW() - make_interval(days => $1 * 2)
+                             AND consultado_em <  NOW() - make_interval(days => $1))::int AS anterior
+        FROM consultas
+        WHERE consultado_em >= NOW() - make_interval(days => $1 * 2)
+      `, [dias]),
 
       this.ds.query<{ total: string; clientes: string; ativos: string }[]>(`
         SELECT
@@ -104,12 +111,12 @@ export class DashboardService {
           COUNT(DISTINCT c.id)::int       AS total
         FROM consultas c
         JOIN empresas e ON e.cnpj = c.cnpj
-        WHERE c.consultado_em >= NOW() - INTERVAL '30 days'
+        WHERE c.consultado_em >= NOW() - make_interval(days => $1)
           AND e.cnae_principal_codigo IS NOT NULL
         GROUP BY e.cnae_principal_codigo
         ORDER BY total DESC
         LIMIT 5
-      `),
+      `, [dias]),
     ]);
 
     const tarefasPendentes = await this.tarefasService.contarPendentes();
@@ -135,14 +142,22 @@ export class DashboardService {
         COUNT(c.id)::int AS total
       FROM consultas c
       LEFT JOIN usuarios u ON u.id::text = c.usuario_id::text
-      WHERE c.consultado_em >= NOW() - INTERVAL '30 days'
+      WHERE c.consultado_em >= NOW() - make_interval(days => $1)
       GROUP BY COALESCE(u.nome, 'Sem identificação')
       ORDER BY total DESC
       LIMIT 5
-    `).catch(() => [] as { nome: string; total: string }[]);
+    `, [dias]).catch(() => [] as { nome: string; total: string }[]);
+
+    const consultasPeriodo  = Number(consultasMesRaw[0]?.atual    ?? 0);
+    const consultasAnterior = Number(consultasMesRaw[0]?.anterior ?? 0);
+    const consultasDelta = consultasAnterior > 0
+      ? Math.round(((consultasPeriodo - consultasAnterior) / consultasAnterior) * 100)
+      : null;
 
     return {
-      totalConsultasMes:        Number(consultasMesRaw[0]?.total        ?? 0),
+      periodoDias:              dias,
+      consultasPeriodo,
+      consultasDelta,
       totalLeads,
       leadsAtivos,
       totalClientes,
