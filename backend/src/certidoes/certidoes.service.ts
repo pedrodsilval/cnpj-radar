@@ -568,6 +568,28 @@ ${blocos}${semPendencias}
   ): Promise<void> {
     let c = await this.certidaoRepo.findOne({ where: { empresaId, tipo } });
     if (!c) c = this.certidaoRepo.create({ empresaId, cnpj });
+
+    // Achado real (22/09/2026): uma re-checagem automática que FALHA
+    // (INDISPONIVEL — site fora do ar, bloqueio de captcha, timeout etc.)
+    // não prova que a certidão deixou de valer. Sobrescrever sempre fazia
+    // isso apagar um REGULAR de verdade (com PDF e validade reais) só
+    // porque a tentativa seguinte não conseguiu reconfirmar — mostrando
+    // "Indisponível" pro usuário quando a empresa continuava com certidão
+    // válida em mãos. Só deixa a falha derrubar um REGULAR anterior se a
+    // validade dele já tiver vencido (aí sim não há mais nada de bom pra
+    // proteger).
+    const mantendoResultadoAnterior =
+      status === CertidaoStatus.INDISPONIVEL &&
+      c.status === CertidaoStatus.REGULAR &&
+      !!c.validade &&
+      c.validade >= new Date().toISOString().slice(0, 10);
+
+    if (mantendoResultadoAnterior) {
+      c.observacoes = `Não foi possível reconfirmar automaticamente em ${new Date().toLocaleDateString('pt-BR')} — mantendo o último resultado confirmado (válido até ${c.validade!.split('-').reverse().join('/')}). Motivo da falha: ${observacoes ?? 'não informado'}`;
+      await this.certidaoRepo.save(c);
+      return;
+    }
+
     c.tipo = tipo;
     c.status = status;
     c.validade = validade;
