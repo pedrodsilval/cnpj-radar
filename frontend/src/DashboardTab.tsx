@@ -253,8 +253,9 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
       {/* Título + seletor de período (aplica a Consultas, CNAEs e Consultores) */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="font-display font-black text-depth text-lg">Dashboard Executivo</h2>
-          <p className="text-gray-400 font-body text-sm mt-0.5">Visão consolidada da carteira.</p>
+          {/* Título fica sobre o gradiente escuro do layout — texto claro (antes text-depth = navy sobre navy, ilegível). */}
+          <h2 className="font-display font-black text-surface text-lg">Dashboard Executivo</h2>
+          <p className="text-surface/60 font-body text-sm mt-0.5">Visão consolidada da carteira.</p>
         </div>
         <div className="flex gap-1 bg-white border border-gray-100 rounded-xl p-1" role="group" aria-label="Período">
           {[7, 30, 90].map(d => (
