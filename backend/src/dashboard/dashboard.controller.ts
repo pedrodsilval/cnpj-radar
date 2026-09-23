@@ -15,6 +15,11 @@ export class DashboardController {
     return this.service.funilConversao();
   }
 
+  @Get('acoes')
+  acoes() {
+    return this.service.acoesPrioritarias();
+  }
+
   @Get('relatorio-consultores')
   relatorioConsultores(
     @Query('de')  de:  string | undefined,

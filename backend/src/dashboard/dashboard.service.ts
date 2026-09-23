@@ -35,6 +35,12 @@ export interface DashboardDto {
   topConsultores: { nome: string; total: number }[];
 }
 
+export interface AcoesPrioritariasDto {
+  certidoes: { empresa: string; cnpj: string | null; tipo: string; status: string; validade: string | null; diasRestantes: number | null }[];
+  tarefas: { id: string; titulo: string; prioridade: string; responsavel: string | null; dataLimite: string | null; atrasada: boolean }[];
+  oportunidades: { empresa: string; cnpj: string; status: string; diasParado: number }[];
+}
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -147,6 +153,66 @@ export class DashboardService {
       consultasPorMes,
       topCnaes:                 topCnaesRaw.map(r => ({ codigo: r.codigo, descricao: r.descricao ?? r.codigo, total: Number(r.total) })),
       topConsultores:           topConsultoresRaw.map(r => ({ nome: r.nome, total: Number(r.total) })),
+    };
+  }
+
+  // Itens concretos para o bloco "Precisa de ação hoje" — transforma as contagens do
+  // resumo em uma lista de trabalho acionável (nome do cliente, prazo, prioridade).
+  async acoesPrioritarias(): Promise<AcoesPrioritariasDto> {
+    const [certRaw, tarRaw, oportRaw] = await Promise.all([
+      this.ds.query<{ cnpj: string | null; tipo: string; status: string; validade: string | null; empresa: string }[]>(`
+        SELECT c.cnpj, c.tipo, c.status, c.validade,
+               COALESCE(e.razao_social, c.cnpj) AS empresa
+        FROM certidoes c
+        LEFT JOIN empresas e ON e.cnpj = c.cnpj
+        WHERE c.status = 'IRREGULAR'
+           OR (c.validade IS NOT NULL AND c.validade::date <= CURRENT_DATE + INTERVAL '7 days' AND c.status = 'REGULAR')
+        ORDER BY (c.status = 'IRREGULAR') DESC, c.validade::date ASC NULLS LAST
+        LIMIT 8
+      `).catch(() => []),
+
+      this.ds.query<{ id: string; titulo: string; prioridade: string; responsavel: string | null; dataLimite: string | null }[]>(`
+        SELECT id, titulo, prioridade,
+               responsavel_nome AS responsavel,
+               TO_CHAR(data_limite, 'YYYY-MM-DD') AS "dataLimite"
+        FROM tarefas
+        WHERE status IN ('pendente','em_andamento')
+        ORDER BY (data_limite IS NULL) ASC, data_limite ASC,
+                 CASE prioridade WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END
+        LIMIT 8
+      `).catch(() => []),
+
+      this.ds.query<{ cnpj: string; status: string; empresa: string; dias: string }[]>(`
+        SELECT l.cnpj, l.status,
+               COALESCE(e.razao_social, l.cnpj) AS empresa,
+               EXTRACT(DAY FROM (NOW() - l.atualizado_em))::int AS dias
+        FROM leads l
+        LEFT JOIN empresas e ON e.cnpj = l.cnpj
+        WHERE l.status NOT IN ('convertido','descartado')
+          AND l.atualizado_em < NOW() - INTERVAL '30 days'
+        ORDER BY l.atualizado_em ASC
+        LIMIT 8
+      `).catch(() => []),
+    ]);
+
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const diasAte = (v: string | null): number | null => {
+      if (!v) return null;
+      return Math.round((new Date(v + 'T00:00:00').getTime() - hoje.getTime()) / 86400000);
+    };
+
+    return {
+      certidoes: certRaw.map(r => ({
+        empresa: r.empresa, cnpj: r.cnpj, tipo: r.tipo, status: r.status,
+        validade: r.validade, diasRestantes: r.status === 'IRREGULAR' ? null : diasAte(r.validade),
+      })),
+      tarefas: tarRaw.map(r => ({
+        id: r.id, titulo: r.titulo, prioridade: r.prioridade, responsavel: r.responsavel,
+        dataLimite: r.dataLimite, atrasada: r.dataLimite ? (diasAte(r.dataLimite) ?? 1) < 0 : false,
+      })),
+      oportunidades: oportRaw.map(r => ({
+        empresa: r.empresa, cnpj: r.cnpj, status: r.status, diasParado: Number(r.dias),
+      })),
     };
   }
 

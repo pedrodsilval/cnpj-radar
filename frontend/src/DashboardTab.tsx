@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { apiFetch } from './auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,6 +17,14 @@ interface DashboardData {
   topConsultores: { nome: string; total: number }[]
 }
 
+interface AcoesData {
+  certidoes: { empresa: string; cnpj: string | null; tipo: string; status: string; validade: string | null; diasRestantes: number | null }[]
+  tarefas: { id: string; titulo: string; prioridade: string; responsavel: string | null; dataLimite: string | null; atrasada: boolean }[]
+  oportunidades: { empresa: string; cnpj: string; status: string; diasParado: number }[]
+}
+
+interface FunilItem { status: string; label: string; total: number }
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatarMes(yyyyMM: string): string {
@@ -24,6 +32,14 @@ function formatarMes(yyyyMM: string): string {
   const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
   return `${nomes[Number(m) - 1]}/${y.slice(2)}`
 }
+
+function formatarData(iso: string | null): string {
+  if (!iso) return ''
+  const [, m, d] = iso.split('-')
+  return `${d}/${m}`
+}
+
+const PRIO_COR: Record<string, string> = { alta: 'bg-danger', media: 'bg-amber-400', baixa: 'bg-gray-300' }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -79,10 +95,115 @@ function MiniBarChart({ data }: { data: { mes: string; total: number }[] }) {
   )
 }
 
+function Funil({ dados }: { dados: FunilItem[] }) {
+  const total = dados.reduce((s, d) => s + d.total, 0)
+  if (total === 0) return <p className="text-gray-300 text-sm font-body text-center py-4">Sem leads ainda.</p>
+  const max = Math.max(...dados.map(d => d.total), 1)
+  const COR: Record<string, string> = {
+    novo: 'bg-gray-300', em_contato: 'bg-primary/50', proposta_enviada: 'bg-primary/70',
+    convertido: 'bg-emerald-500', descartado: 'bg-gray-200',
+  }
+  return (
+    <div className="space-y-2">
+      {dados.map(d => (
+        <div key={d.status} className="flex items-center gap-2">
+          <span className="w-28 text-[11px] font-body text-gray-500 flex-shrink-0">{d.label}</span>
+          <div className="flex-1 bg-gray-50 rounded-full h-4 overflow-hidden">
+            <div className={`h-4 rounded-full transition-all ${COR[d.status] || 'bg-primary/60'}`}
+                 style={{ width: `${Math.round((d.total / max) * 100)}%`, minWidth: d.total > 0 ? '8px' : '0' }} />
+          </div>
+          <span className="w-6 text-right text-xs font-display font-bold text-depth flex-shrink-0">{d.total}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Coluna genérica do bloco "Precisa de ação hoje".
+function ColunaAcao({ titulo, n, onVerTodos, vazio, children }: {
+  titulo: string; n: number; onVerTodos?: () => void; vazio: string; children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-display font-bold text-depth">{titulo} <span className="text-gray-300">({n})</span></span>
+        {onVerTodos && n > 0 && (
+          <button type="button" onClick={onVerTodos}
+                  className="text-[11px] font-display font-bold text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded">
+            ver todas ›
+          </button>
+        )}
+      </div>
+      {n === 0 ? <p className="text-xs text-gray-300 font-body">{vazio}</p> : <ul className="space-y-2">{children}</ul>}
+    </div>
+  )
+}
+
+function AcoesHoje({ acoes, onNavegar }: { acoes: AcoesData; onNavegar?: (vista: string) => void }) {
+  const { certidoes, tarefas, oportunidades } = acoes
+  if (certidoes.length + tarefas.length + oportunidades.length === 0) return null
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-5">
+      <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">Precisa de ação hoje</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5 mt-4">
+
+        <ColunaAcao titulo="Certidões" n={certidoes.length} vazio="Tudo em dia."
+          onVerTodos={onNavegar ? () => onNavegar('alertas') : undefined}>
+          {certidoes.slice(0, 5).map((c, i) => {
+            const critico = c.status === 'IRREGULAR' || (c.diasRestantes ?? 0) < 0
+            return (
+              <li key={i} className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-display font-bold text-depth truncate">{c.empresa}</p>
+                  <p className="text-[10px] text-gray-400 font-body truncate">{c.tipo}</p>
+                </div>
+                <span className={`text-[10px] font-display font-bold whitespace-nowrap flex-shrink-0 ${critico ? 'text-danger' : 'text-amber-600'}`}>
+                  {c.status === 'IRREGULAR' ? 'Irregular'
+                    : c.diasRestantes === null ? '—'
+                    : c.diasRestantes < 0 ? `vencida ${Math.abs(c.diasRestantes)}d`
+                    : `vence ${c.diasRestantes}d`}
+                </span>
+              </li>
+            )
+          })}
+        </ColunaAcao>
+
+        <ColunaAcao titulo="Tarefas" n={tarefas.length} vazio="Nada pendente."
+          onVerTodos={onNavegar ? () => onNavegar('tarefas') : undefined}>
+          {tarefas.slice(0, 5).map(t => (
+            <li key={t.id} className="flex items-start gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${PRIO_COR[t.prioridade] || 'bg-gray-300'}`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-display font-bold text-depth truncate">{t.titulo}</p>
+                <p className="text-[10px] text-gray-400 font-body truncate">{t.responsavel ?? 'sem responsável'}</p>
+              </div>
+              <span className={`text-[10px] font-display font-bold whitespace-nowrap flex-shrink-0 ${t.atrasada ? 'text-danger' : 'text-gray-400'}`}>
+                {t.atrasada ? 'atrasada' : t.dataLimite ? formatarData(t.dataLimite) : 'sem prazo'}
+              </span>
+            </li>
+          ))}
+        </ColunaAcao>
+
+        <ColunaAcao titulo="Oport. paradas" n={oportunidades.length} vazio="Nenhuma parada.">
+          {oportunidades.slice(0, 5).map((o, i) => (
+            <li key={i} className="flex items-start justify-between gap-2">
+              <p className="text-xs font-display font-bold text-depth truncate min-w-0">{o.empresa}</p>
+              <span className="text-[10px] font-display font-bold text-amber-600 whitespace-nowrap flex-shrink-0">{o.diasParado}d parado</span>
+            </li>
+          ))}
+        </ColunaAcao>
+
+      </div>
+    </div>
+  )
+}
+
 // ─── DashboardTab ─────────────────────────────────────────────────────────────
 
 export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => void }) {
   const [dados, setDados]       = useState<DashboardData | null>(null)
+  const [acoes, setAcoes]       = useState<AcoesData | null>(null)
+  const [funil, setFunil]       = useState<FunilItem[]>([])
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro]         = useState<string | null>(null)
 
@@ -91,9 +212,16 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
       setCarregando(true)
       setErro(null)
       try {
-        const res = await apiFetch('/dashboard')
-        if (!res.ok) { setErro('Não foi possível carregar o dashboard.'); return }
-        setDados(await res.json() as DashboardData)
+        // Resumo é obrigatório; ações e funil são best-effort (não derrubam o dashboard).
+        const [rd, ra, rf] = await Promise.all([
+          apiFetch('/dashboard'),
+          apiFetch('/dashboard/acoes').catch(() => null),
+          apiFetch('/dashboard/funil-conversao').catch(() => null),
+        ])
+        if (!rd.ok) { setErro('Não foi possível carregar o dashboard.'); return }
+        setDados(await rd.json() as DashboardData)
+        if (ra && ra.ok) setAcoes(await ra.json() as AcoesData)
+        if (rf && rf.ok) setFunil(await rf.json() as FunilItem[])
       } catch { setErro('Erro de rede.') }
       finally { setCarregando(false) }
     }
@@ -164,6 +292,9 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
         />
       </div>
 
+      {/* Precisa de ação hoje (I2) — lista de trabalho priorizada */}
+      {acoes && <AcoesHoje acoes={acoes} onNavegar={onNavegar} />}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         {/* Consultas por mês */}
@@ -203,6 +334,22 @@ export function DashboardTab({ onNavegar }: { onNavegar?: (vista: string) => voi
               })}
             </ol>
           )}
+        </div>
+
+        {/* Funil de conversão (I3) */}
+        <div className="bg-white rounded-2xl border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-display font-bold text-gray-400 uppercase tracking-widest">
+              Funil de conversão
+            </h3>
+            {onNavegar && (
+              <button type="button" onClick={() => onNavegar('clientes')}
+                className="text-xs font-display font-bold text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded">
+                Clientes ›
+              </button>
+            )}
+          </div>
+          <Funil dados={funil} />
         </div>
 
         {/* Top consultores */}
