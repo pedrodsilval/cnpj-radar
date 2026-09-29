@@ -9,6 +9,7 @@ import { CnpjModule } from './cnpj/cnpj.module';
 import { LeadsModule } from './leads/leads.module';
 import { WorkflowRunsModule } from './workflow-runs/workflow-runs.module';
 import { CertidoesModule } from './certidoes/certidoes.module';
+import { RelatoriosModule } from './relatorios/relatorios.module';
 import { CredenciaisModule } from './credenciais/credenciais.module';
 import { PainelModule } from './painel/painel.module';
 import { EmpresasModule } from './empresas/empresas.module';
@@ -37,6 +38,7 @@ import { Usuario } from './database/entities/usuario.entity';
     LeadsModule,
     WorkflowRunsModule,
     CertidoesModule,
+    RelatoriosModule,
     CredenciaisModule,
     PainelModule,
     EmpresasModule,

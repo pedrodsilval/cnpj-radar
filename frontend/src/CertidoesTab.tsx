@@ -324,6 +324,7 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
   const [expandido, setExpandido]               = useState<string | null>(null)
   const [consultandoAuto, setConsultandoAuto]   = useState(false)
   const [erroAuto, setErroAuto]                 = useState<string | null>(null)
+  const [baixandoRelatorio, setBaixandoRelatorio] = useState(false)
 
   async function carregar() {
     setCarregando(true)
@@ -422,6 +423,33 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
     carregar()
   }
 
+  // Vai via apiFetch (não um <a href> puro) pra garantir que o Authorization
+  // Bearer é enviado — a rota exige login como qualquer outra do backend.
+  async function baixarPreAnalise() {
+    setBaixandoRelatorio(true)
+    setErroAuto(null)
+    try {
+      const res = await apiFetch(`/relatorios/pre-analise/${cnpj}`)
+      if (!res.ok) {
+        setErroAuto('Não foi possível gerar o relatório de pré-análise.')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `pre-analise-${cnpj}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setErroAuto('Erro de rede ao gerar o relatório.')
+    } finally {
+      setBaixandoRelatorio(false)
+    }
+  }
+
   const regulares   = itens.filter(i => i.status === 'REGULAR').length
   const irregulares = itens.filter(i => i.status === 'IRREGULAR').length
   const vencendo    = itens.filter(i =>
@@ -474,6 +502,13 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
               ⚠ {erroAuto}
             </span>
           )}
+          <button
+            onClick={baixarPreAnalise}
+            disabled={baixandoRelatorio}
+            className="text-sm font-display font-bold px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {baixandoRelatorio ? 'Gerando…' : 'Relatório de pré-análise'}
+          </button>
           <button
             onClick={consultarAuto}
             disabled={consultandoAuto}
