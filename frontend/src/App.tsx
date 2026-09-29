@@ -553,6 +553,24 @@ function App() {
     return () => window.removeEventListener('cnpj-radar-sessao-expirada', onSessaoExpirada)
   }, [])
 
+  // Retoma a última empresa consultada ao (re)abrir a tela — só quando ainda
+  // não há usuário digitando/consultando nada (não sobrescreve uma busca em
+  // andamento). Precisa ficar ANTES do "if (!logado) return" abaixo — um
+  // hook declarado depois de um return condicional quebra a ordem dos Hooks
+  // do React e derruba o app inteiro em branco (aconteceu em produção local
+  // 29/09/2026, corrigido movendo pra cá).
+  useEffect(() => {
+    if (!logado) return
+    if (cnpj) return
+    let ultimo: string | null = null
+    try { ultimo = localStorage.getItem('ultimoCnpjConsultado') } catch { /* storage pode estar bloqueado */ }
+    if (ultimo) {
+      setCnpj(ultimo)
+      consultarCnpj(ultimo)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logado])
+
   if (!logado) {
     return (
       <LoginPage
@@ -562,8 +580,13 @@ function App() {
     )
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  // Extraído de handleSubmit pra poder rodar sozinho no mount (retomando a
+  // última empresa vista) sem precisar de um evento de formulário. Sem isso,
+  // sair da consulta (fechar a aba, dar F5, trocar de tela) perdia o CNPJ
+  // digitado e obrigava a buscar de novo do zero — desconfortável
+  // especialmente pro fluxo de CND Federal via extensão, que é assíncrono e
+  // pede pra "recarregar a tela depois".
+  async function consultarCnpj(valorCnpj: string) {
     const qid = ++queryIdRef.current
     setConsulta(CONSULTA_IDLE)
     setLead(LEAD_IDLE)
@@ -571,7 +594,7 @@ function App() {
     setProposta(PROPOSTA_IDLE)
     setActiveTab('cadastro')
 
-    const limpo = sanitizar(cnpj)
+    const limpo = sanitizar(valorCnpj)
     if (!limpo) {
       setConsulta(prev => ({ ...prev, erro: 'Informe o CNPJ para consultar.' }))
       return
@@ -590,12 +613,18 @@ function App() {
       }
 
       setConsulta(prev => ({ ...prev, resultado: json as ResultadoSucesso, cnpjConsultado: limpo }))
+      try { localStorage.setItem('ultimoCnpjConsultado', limpo) } catch { /* storage pode estar bloqueado, não é crítico */ }
     } catch {
       if (qid !== queryIdRef.current) return
       setConsulta(prev => ({ ...prev, erro: 'Não foi possível consultar agora. Verifique sua conexão.' }))
     } finally {
       if (qid === queryIdRef.current) setConsulta(prev => ({ ...prev, carregando: false }))
     }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    await consultarCnpj(cnpj)
   }
 
   async function handleGerarProposta() {
