@@ -82,13 +82,25 @@ async function processarCnd(cnpj) {
   if (!campoCnpj) return { status: 'INDISPONIVEL', mensagem: 'Formulário de CNPJ não apareceu.' };
 
   campoCnpj.focus();
-  // Simula digitação de verdade (dispara os eventos que frameworks reativos esperam).
+  // O campo é Angular reactive form com diretiva de máscara que só reage a
+  // `InputEvent` de verdade (com `inputType`/`data`) — um `Event('input')`
+  // genérico ou `execCommand('insertText')` (testados e descartados em
+  // produção 29/09/2026, ambos deixavam o FormControl com `ng-invalid` e a
+  // Receita rejeitava com "CNPJ inválido. Devem ser digitados 14
+  // caracteres") não é suficiente. Confirmado via teste isolado no DOM real
+  // (sem clicar em emitir) que precisa da sequência completa
+  // keydown -> set valor -> InputEvent(insertText, data) -> keyup por
+  // caractere; só assim o campo formata (`03.696.589/0001-00`) e o Angular
+  // marca `ng-valid`.
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
   setter.call(campoCnpj, '');
-  campoCnpj.dispatchEvent(new Event('input', { bubbles: true }));
+  campoCnpj.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+  await esperar(50);
   for (const char of cnpj) {
+    campoCnpj.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: char }));
     setter.call(campoCnpj, campoCnpj.value + char);
-    campoCnpj.dispatchEvent(new Event('input', { bubbles: true }));
+    campoCnpj.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: char }));
+    campoCnpj.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: char }));
     await esperar(60);
   }
   campoCnpj.dispatchEvent(new Event('change', { bubbles: true }));
@@ -101,7 +113,12 @@ async function processarCnd(cnpj) {
   await esperar(3_000);
 
   // Se já existe certidão válida, o site pergunta antes de emitir uma nova.
-  const modalValida = buscarClicavelPorTexto('Certidão Válida Encontrada');
+  // "Certidão Válida Encontrada" é o TÍTULO do modal, não um botão/link —
+  // `buscarClicavelPorTexto` só olha elementos clicáveis e nunca achava isso
+  // (confirmado em produção 29/09/2026: a extensão caía direto no fallback
+  // genérico com o modal ainda aberto na tela, sem nunca clicar "Emitir Nova
+  // Certidão"). Procura no texto da página inteira em vez de só nos clicáveis.
+  const modalValida = textoVisivel(document.body).includes('Certidão Válida Encontrada');
   if (modalValida) {
     const emitirNova = await esperarElementoPorTexto('Emitir Nova Certidão', true, 8_000);
     if (emitirNova) { emitirNova.click(); await esperar(3_000); }
