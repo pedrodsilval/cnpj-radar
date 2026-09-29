@@ -12,11 +12,16 @@ const MIN_MS_ENTRE_TENTATIVAS = 2 * 60 * 60 * 1000; // 2h — espaçamento de se
 const SITES_AQUECIMENTO = ['https://www.google.com', 'https://www.uol.com.br', 'https://www.gov.br'];
 const URL_RECEITA = 'https://servicos.receitafederal.gov.br/servico/certidoes/';
 
+// 2min só decide de quanto em quanto tempo CONFERE a fila (chamada barata pro
+// nosso próprio backend, sem tocar a Receita) — o espaçamento de verdade
+// contra o hCaptcha continua sendo o MIN_MS_ENTRE_TENTATIVAS de 2h acima.
+// Antes era 15min, o que deixava o painel (que só espera 15s depois de
+// "Consultar automaticamente") quase sempre mostrando "aguardando".
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 15 });
+  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 2 });
 });
 chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 15 });
+  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 2 });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
