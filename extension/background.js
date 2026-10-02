@@ -43,8 +43,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     tentarProcessarJob({ ignorarEspacamento: true }).then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, erro: String(err) }));
     return true;
   }
-  // RESULTADO_CND é tratado dentro de processarViaTab (listener local, não aqui).
+  if (msg.type === 'RESOLVER_CAPTCHA') {
+    // Feito aqui (não no content script) porque o fetch de lá herdaria o CSP
+    // da página de destino, que pode bloquear requisição pra domínio externo
+    // sem erro visível — o service worker não tem essa restrição.
+    resolverCaptchaImagem(msg.imagemBase64).then((token) => sendResponse({ token })).catch((err) => sendResponse({ token: null, erro: String(err) }));
+    return true;
+  }
+  // RESULTADO_CND/RESULTADO_MUNICIPAL_SP são tratados nos listeners locais
+  // de cada fluxo (processarJobCndFederal/processarJobMunicipalSaoPaulo),
+  // não aqui.
 });
+
+async function resolverCaptchaImagem(imagemBase64) {
+  const { token } = await chrome.storage.local.get('token');
+  if (!token) return null;
+  const res = await fetch(`${API_BASE}/certidoes/resolver-captcha`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ imagemBase64 }),
+  }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const json = await res.json().catch(() => ({}));
+  return json.token || null;
+}
 
 function aguardarNavegacaoCompleta(tabId, timeoutMs = 30_000) {
   return new Promise((resolve) => {

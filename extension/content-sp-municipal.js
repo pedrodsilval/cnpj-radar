@@ -9,7 +9,6 @@
 // variável de módulo (que morreria no reload).
 
 const ESTADO_KEY = 'spMunicipalJob';
-const API_BASE = 'https://radar.everestcontabilidade.com';
 const MAX_TENTATIVAS = 4;
 
 function esperar(ms) {
@@ -42,18 +41,16 @@ function imagemParaBase64(img) {
   return canvas.toDataURL('image/png');
 }
 
+// Não faz o fetch direto daqui: content scripts herdam o CSP da própria
+// página, e um site de governo costuma ter connect-src restritivo que
+// bloqueia requisições pra domínios externos (silenciosamente — cai no
+// .catch sem erro nenhum útil, foi exatamente o que aconteceu no primeiro
+// teste real em 02/10/2026). O service worker (background.js) não sofre
+// esse CSP, então pede a ele pra fazer a chamada.
 async function resolverCaptcha(img) {
-  const { token } = await chrome.storage.local.get('token');
-  if (!token) return null;
   const imagemBase64 = imagemParaBase64(img);
-  const res = await fetch(`${API_BASE}/certidoes/resolver-captcha`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ imagemBase64 }),
-  }).catch(() => null);
-  if (!res || !res.ok) return null;
-  const json = await res.json().catch(() => ({}));
-  return json.token || null;
+  const resposta = await chrome.runtime.sendMessage({ type: 'RESOLVER_CAPTCHA', imagemBase64 }).catch((err) => ({ erro: String(err) }));
+  return resposta && resposta.token ? resposta.token : null;
 }
 
 function selectComEvento(el, valor) {
