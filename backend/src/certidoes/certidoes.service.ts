@@ -18,6 +18,7 @@ import { CertidoesScraperService } from './certidoes-scraper.service';
 import { Anexo } from '../database/entities/anexo.entity';
 import { Lead } from '../leads/entities/lead.entity';
 import { CertidaoJob, CertidaoJobStatus } from './entities/certidao-job.entity';
+import { CertidaoHistorico } from './entities/certidao-historico.entity';
 
 export interface ChecklistItem {
   tipo: CertidaoTipo;
@@ -53,6 +54,8 @@ export class CertidoesService {
     private readonly leadRepo: Repository<Lead>,
     @InjectRepository(CertidaoJob)
     private readonly jobRepo: Repository<CertidaoJob>,
+    @InjectRepository(CertidaoHistorico)
+    private readonly certidaoHistoricoRepo: Repository<CertidaoHistorico>,
     private readonly scraper: CertidoesScraperService,
     private readonly storage: SupabaseStorageService,
   ) {}
@@ -73,6 +76,7 @@ export class CertidoesService {
     let certidao = await this.certidaoRepo.findOne({
       where: { empresaId: empresa.id, tipo: dto.tipo },
     });
+    const anterior = certidao ? { status: certidao.status, validade: certidao.validade, urlArquivo: certidao.urlArquivo } : null;
 
     if (!certidao) {
       certidao = this.certidaoRepo.create({ empresaId: empresa.id, cnpj: sanitized });
@@ -85,7 +89,9 @@ export class CertidoesService {
     certidao.responsavelId = dto.responsavelId ?? null;
     certidao.urlArquivo = dto.urlArquivo ?? null;
 
-    return this.certidaoRepo.save(certidao);
+    const salva = await this.certidaoRepo.save(certidao);
+    await this.registrarHistoricoSeMudou(salva.empresaId, sanitized, salva.tipo, salva.status, salva.validade, salva.urlArquivo, salva.observacoes, anterior);
+    return salva;
   }
 
   async listarPorEmpresa(cnpj: string): Promise<Certidao[]> {
@@ -568,6 +574,7 @@ ${blocos}${semPendencias}
     pendenciaReal = false,
   ): Promise<void> {
     let c = await this.certidaoRepo.findOne({ where: { empresaId, tipo } });
+    const anterior = c ? { status: c.status, validade: c.validade, urlArquivo: c.urlArquivo } : null;
     if (!c) c = this.certidaoRepo.create({ empresaId, cnpj });
 
     // Achado real (22/09/2026): uma re-checagem automática que FALHA
@@ -608,5 +615,41 @@ ${blocos}${semPendencias}
     // não trouxe mensagem nenhuma (ex.: consulta manual).
     c.observacoes = observacoes;
     await this.certidaoRepo.save(c);
+
+    await this.registrarHistoricoSeMudou(empresaId, cnpj, tipo, c.status, c.validade, c.urlArquivo, c.observacoes, anterior);
+  }
+
+  // Grava uma linha no histórico só quando o resultado de fato muda — rodar
+  // a mesma consulta várias vezes seguidas (ex. testando) não deve acumular
+  // linhas idênticas. `anterior` null (primeira consulta desse tipo) sempre
+  // conta como mudança, pra já nascer com um registro.
+  private async registrarHistoricoSeMudou(
+    empresaId: string,
+    cnpj: string,
+    tipo: CertidaoTipo,
+    status: CertidaoStatus,
+    validade: string | null,
+    urlArquivo: string | null,
+    observacoes: string | null,
+    anterior: { status: CertidaoStatus; validade: string | null; urlArquivo: string | null } | null,
+  ): Promise<void> {
+    const mudou =
+      !anterior ||
+      anterior.status !== status ||
+      anterior.validade !== validade ||
+      anterior.urlArquivo !== urlArquivo;
+    if (!mudou) return;
+
+    await this.certidaoHistoricoRepo.save(
+      this.certidaoHistoricoRepo.create({ empresaId, cnpj, tipo, status, validade, urlArquivo, observacoes }),
+    );
+  }
+
+  async historico(cnpj: string, tipo?: CertidaoTipo): Promise<CertidaoHistorico[]> {
+    const empresa = await this.resolverEmpresa(cnpj);
+    return this.certidaoHistoricoRepo.find({
+      where: tipo ? { empresaId: empresa.id, tipo } : { empresaId: empresa.id },
+      order: { criadoEm: 'DESC' },
+    });
   }
 }

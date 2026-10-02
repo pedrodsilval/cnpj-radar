@@ -24,6 +24,15 @@ interface ChecklistItem {
   observacoes: string | null
 }
 
+interface HistoricoItem {
+  id: string
+  status: CertidaoStatus
+  validade: string | null
+  urlArquivo: string | null
+  observacoes: string | null
+  criadoEm: string
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const STATUS_CFG: Record<CertidaoStatus, { label: string; pill: string; dot: string }> = {
@@ -95,6 +104,25 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
   const [erroForm, setErroForm]   = useState<string | null>(null)
   const [uploadando, setUploadando] = useState(false)
   const fileRef                   = useRef<HTMLInputElement>(null)
+  const [historicoAberto, setHistoricoAberto]   = useState(false)
+  const [historico, setHistorico]               = useState<HistoricoItem[]>([])
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false)
+
+  async function toggleHistorico() {
+    if (historicoAberto) {
+      setHistoricoAberto(false)
+      return
+    }
+    setHistoricoAberto(true)
+    setCarregandoHistorico(true)
+    try {
+      const res = await apiFetch(`/certidoes/historico/${cnpj}?tipo=${item.tipo}`)
+      const json = await res.json()
+      if (res.ok) setHistorico(json as HistoricoItem[])
+    } finally {
+      setCarregandoHistorico(false)
+    }
+  }
 
   useEffect(() => {
     setForm({ status: item.status, validade: item.validade ?? '', observacoes: '' })
@@ -242,8 +270,36 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
                 Baixar PDF
               </a>
             )}
+
+            {item.certidaoId && (
+              <button
+                onClick={toggleHistorico}
+                className="text-xs font-display font-bold px-3 py-1.5 rounded-xl border border-gray-200 text-gray-500 hover:text-depth hover:border-gray-300 transition-colors"
+              >
+                {historicoAberto ? 'Ocultar histórico' : 'Histórico'}
+              </button>
+            )}
           </div>
         </div>
+
+        {historicoAberto && (
+          <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+            {carregandoHistorico ? (
+              <p className="text-xs text-gray-400 font-body">Carregando…</p>
+            ) : historico.length === 0 ? (
+              <p className="text-xs text-gray-400 font-body">Sem mudanças de resultado registradas ainda.</p>
+            ) : (
+              historico.map(h => (
+                <div key={h.id} className="flex items-center justify-between gap-2 text-xs font-body bg-gray-50 rounded-lg px-2.5 py-1.5">
+                  <span className="text-gray-400">
+                    {new Date(h.criadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                  </span>
+                  <StatusPill status={h.status} />
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
         {erroForm && !expandido && (
           <p className="mt-2 text-xs text-danger font-display font-bold flex items-center gap-1">

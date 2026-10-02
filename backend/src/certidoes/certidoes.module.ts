@@ -6,6 +6,7 @@ import { Certidao } from '../database/entities/certidao.entity';
 import { Anexo } from '../database/entities/anexo.entity';
 import { Lead } from '../leads/entities/lead.entity';
 import { CertidaoJob } from './entities/certidao-job.entity';
+import { CertidaoHistorico } from './entities/certidao-historico.entity';
 import { CertidoesService } from './certidoes.service';
 import { CertidoesController } from './certidoes.controller';
 import { CertidoesScraperService } from './certidoes-scraper.service';
@@ -15,7 +16,7 @@ import { SupabaseStorageService } from '../common/supabase-storage.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Certidao, Anexo, Lead, CertidaoJob]),
+    TypeOrmModule.forFeature([Certidao, Anexo, Lead, CertidaoJob, CertidaoHistorico]),
     CnpjModule,
     CredenciaisModule,
   ],

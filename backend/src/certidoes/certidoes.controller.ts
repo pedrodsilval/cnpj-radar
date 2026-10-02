@@ -36,6 +36,11 @@ export class CertidoesController {
     return this.service.listarPorEmpresa(cnpj);
   }
 
+  @Get('historico/:cnpj')
+  historico(@Param('cnpj') cnpj: string, @Query('tipo') tipo?: CertidaoTipo) {
+    return this.service.historico(cnpj, tipo);
+  }
+
   @Post('empresa/:cnpj')
   registrar(@Param('cnpj') cnpj: string, @Body() dto: RegistrarDto) {
     return this.service.registrar(cnpj, dto);
