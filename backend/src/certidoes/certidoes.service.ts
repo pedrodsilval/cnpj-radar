@@ -17,7 +17,7 @@ import { RegistrarDto, AtualizarStatusDto } from './certidoes.dto';
 import { CertidoesScraperService } from './certidoes-scraper.service';
 import { Anexo } from '../database/entities/anexo.entity';
 import { Lead } from '../leads/entities/lead.entity';
-import { CertidaoJob, CertidaoJobStatus } from './entities/certidao-job.entity';
+import { CertidaoJob, CertidaoJobStatus, CertidaoJobTipo } from './entities/certidao-job.entity';
 import { CertidaoHistorico } from './entities/certidao-historico.entity';
 
 export interface ChecklistItem {
@@ -31,6 +31,7 @@ export interface ChecklistItem {
   dataConsulta: Date | null;
   urlArquivo: string | null;
   observacoes: string | null;
+  viaFilaExtensao: boolean;
 }
 
 const TODOS_TIPOS = Object.values(CertidaoTipo);
@@ -39,6 +40,19 @@ function diasParaVencer(validade: string | null): number | null {
   if (!validade) return null;
   const diff = new Date(validade).getTime() - Date.now();
   return Math.ceil(diff / 86_400_000);
+}
+
+// Mesmos tipos que hoje só funcionam de IP residencial (via extensão de
+// Chrome) em vez de direto do servidor — CND Federal/Dívida Ativa (hCaptcha
+// da Receita) e, desde 02/10/2026, Certidão Municipal de São Paulo (portal
+// começou a resetar a conexão em automação headless/datacenter).
+function requerFilaExtensao(tipo: CertidaoTipo, empresa: Empresa): boolean {
+  if (tipo === CertidaoTipo.CND_FEDERAL || tipo === CertidaoTipo.DIVIDA_ATIVA) return true;
+  if (tipo === CertidaoTipo.MUNICIPAL) {
+    const municipio = (empresa.municipio ?? '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    return (empresa.uf ?? '').toUpperCase().trim() === 'SP' && municipio.includes('SAO PAULO');
+  }
+  return false;
 }
 
 @Injectable()
@@ -134,6 +148,7 @@ export class CertidoesService {
         dataConsulta: c?.dataConsulta ?? null,
         urlArquivo: c?.urlArquivo ?? null,
         observacoes: c?.observacoes ?? null,
+        viaFilaExtensao: requerFilaExtensao(tipo, empresa),
       };
     });
   }
@@ -282,23 +297,35 @@ export class CertidoesService {
   // (perfil aquecido, IP residencial) e devolve o PDF pra cá.
   // ---------------------------------------------------------------------------
 
-  async criarJobCndFederal(cnpj: string, usuarioId: string): Promise<CertidaoJob> {
+  private async criarJob(cnpj: string, usuarioId: string, tipo: CertidaoJobTipo): Promise<CertidaoJob> {
     const empresa = await this.resolverEmpresa(cnpj);
     const sanitized = sanitizeCnpj(cnpj);
 
-    // Não empilha job duplicado pro mesmo CNPJ enquanto o anterior não
+    // Não empilha job duplicado pro mesmo CNPJ+tipo enquanto o anterior não
     // terminar — devolve o que já existe em vez de criar outro.
     const existente = await this.jobRepo.findOne({
       where: [
-        { empresaId: empresa.id, status: CertidaoJobStatus.PENDENTE },
-        { empresaId: empresa.id, status: CertidaoJobStatus.EM_ANDAMENTO },
+        { empresaId: empresa.id, tipo, status: CertidaoJobStatus.PENDENTE },
+        { empresaId: empresa.id, tipo, status: CertidaoJobStatus.EM_ANDAMENTO },
       ],
       order: { criadoEm: 'DESC' },
     });
     if (existente) return existente;
 
-    const job = this.jobRepo.create({ empresaId: empresa.id, cnpj: sanitized, solicitadoPor: usuarioId });
+    const job = this.jobRepo.create({ empresaId: empresa.id, cnpj: sanitized, tipo, solicitadoPor: usuarioId });
     return this.jobRepo.save(job);
+  }
+
+  async criarJobCndFederal(cnpj: string, usuarioId: string): Promise<CertidaoJob> {
+    return this.criarJob(cnpj, usuarioId, CertidaoJobTipo.CND_FEDERAL);
+  }
+
+  async criarJobMunicipalSaoPaulo(cnpj: string, usuarioId: string): Promise<CertidaoJob> {
+    return this.criarJob(cnpj, usuarioId, CertidaoJobTipo.MUNICIPAL_SAO_PAULO);
+  }
+
+  async resolverCaptchaImagem(imagemBase64: string): Promise<string | null> {
+    return this.scraper.resolverCaptchaImagemPublico(imagemBase64);
   }
 
   async buscarJob(jobId: string): Promise<CertidaoJob> {
@@ -308,9 +335,11 @@ export class CertidoesService {
   }
 
   // Chamado pela extensão fazendo polling — pega o job pendente mais antigo
-  // da fila (não é por usuário: é o escritório inteiro compartilhando a
-  // mesma fila, qualquer extensão pareada pode assumir qualquer job).
-  async proximoJobCndFederal(usuarioId: string): Promise<{ jobId: string; cnpj: string } | null> {
+  // da fila, de qualquer tipo (não é por usuário: é o escritório inteiro
+  // compartilhando a mesma fila, qualquer extensão pareada pode assumir
+  // qualquer job). O "tipo" na resposta é o que diz pra extensão qual site/
+  // fluxo rodar (ver background.js).
+  async proximoJobCndFederal(usuarioId: string): Promise<{ jobId: string; cnpj: string; tipo: CertidaoJobTipo } | null> {
     const job = await this.jobRepo.findOne({ where: { status: CertidaoJobStatus.PENDENTE }, order: { criadoEm: 'ASC' } });
     if (!job) return null;
 
@@ -319,7 +348,7 @@ export class CertidoesService {
     job.assumidoEm = new Date();
     await this.jobRepo.save(job);
 
-    return { jobId: job.id, cnpj: job.cnpj };
+    return { jobId: job.id, cnpj: job.cnpj, tipo: job.tipo };
   }
 
   async resolverJobCndFederal(
@@ -330,20 +359,29 @@ export class CertidoesService {
   ): Promise<void> {
     const job = await this.buscarJob(jobId);
 
-    let validade: string | null = null;
-    let urlArquivo: string | null = null;
-    if (pdfBuffer) {
-      urlArquivo = await this.storage.uploadPdf(pdfBuffer, `cnd-federal-${job.cnpj}`);
-      validade = await this.scraper.extrairValidadeDoPdf(pdfBuffer);
-    }
-
     const novoStatus = status === 'REGULAR'   ? CertidaoStatus.REGULAR
                       : status === 'IRREGULAR' ? CertidaoStatus.IRREGULAR
                                                 : CertidaoStatus.INDISPONIVEL;
 
-    // Mesma emissão cobre os dois tipos (ver consultarFederalEDividaAtiva).
-    for (const tipo of [CertidaoTipo.CND_FEDERAL, CertidaoTipo.DIVIDA_ATIVA]) {
-      await this.upsertCertidao(job.empresaId, job.cnpj, tipo, novoStatus, validade, CertidaoOrigem.AUTOMATICO, urlArquivo, mensagem);
+    if (job.tipo === CertidaoJobTipo.MUNICIPAL_SAO_PAULO) {
+      // Esse fluxo não produz PDF — o resultado vem só do texto da página
+      // de confirmação (ver content-sp-municipal.js na extensão).
+      await this.upsertCertidao(
+        job.empresaId, job.cnpj, CertidaoTipo.MUNICIPAL, novoStatus, null,
+        CertidaoOrigem.AUTOMATICO, null, mensagem, status === 'IRREGULAR',
+      );
+    } else {
+      let validade: string | null = null;
+      let urlArquivo: string | null = null;
+      if (pdfBuffer) {
+        urlArquivo = await this.storage.uploadPdf(pdfBuffer, `cnd-federal-${job.cnpj}`);
+        validade = await this.scraper.extrairValidadeDoPdf(pdfBuffer);
+      }
+
+      // Mesma emissão cobre os dois tipos (ver consultarFederalEDividaAtiva).
+      for (const tipo of [CertidaoTipo.CND_FEDERAL, CertidaoTipo.DIVIDA_ATIVA]) {
+        await this.upsertCertidao(job.empresaId, job.cnpj, tipo, novoStatus, validade, CertidaoOrigem.AUTOMATICO, urlArquivo, mensagem);
+      }
     }
 
     job.status = status === 'INDISPONIVEL' ? CertidaoJobStatus.ERRO : CertidaoJobStatus.CONCLUIDO;

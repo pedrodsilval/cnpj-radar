@@ -22,6 +22,7 @@ interface ChecklistItem {
   dataConsulta: string | null
   urlArquivo: string | null
   observacoes: string | null
+  viaFilaExtensao: boolean
 }
 
 interface HistoricoItem {
@@ -405,18 +406,18 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cnpj])
 
-  // CND Federal (via 2captcha/servidor) sempre esbarra no bloqueio de bot do
-  // hCaptcha da Receita quando roda de datacenter — não tem solução do lado
-  // do servidor (ver memória do projeto). Em vez de gastar 2captcha numa
+  // Alguns tipos esbarram em bloqueio de bot quando rodam do servidor
+  // (datacenter): CND Federal/Dívida Ativa (hCaptcha da Receita) e, desde
+  // 02/10/2026, Certidão Municipal de São Paulo (o portal passou a resetar
+  // a conexão em automação headless). Em vez de gastar 2captcha numa
   // tentativa fadada a falhar, entra numa fila que a extensão de Chrome
   // instalada no navegador do usuário consome, emitindo de verdade com IP
-  // residencial. Dívida Ativa é a mesma certidão — uma emissão só resolve
-  // os dois tipos, então não cria job duplicado pra ela.
-  async function consultarViaJob(): Promise<void> {
-    const res = await apiFetch(`/certidoes/jobs/${cnpj}`, { method: 'POST' })
+  // residencial — ver `viaFilaExtensao` no checklist.
+  async function consultarViaJob(criarJobUrl: string, label: string): Promise<void> {
+    const res = await apiFetch(criarJobUrl, { method: 'POST' })
     if (!res.ok) {
       const json = await res.json().catch(() => ({}))
-      setErroAuto((json as { message?: string }).message ?? 'Erro ao criar job de CND Federal.')
+      setErroAuto((json as { message?: string }).message ?? `Erro ao criar job de ${label}.`)
       return
     }
     const job = await res.json() as { id: string; status: string }
@@ -435,7 +436,7 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
         return
       }
     }
-    setErroAuto('CND Federal/Dívida Ativa: job criado, aguardando a extensão de Chrome processar (pode levar um tempo — recarregue a tela depois).')
+    setErroAuto(`${label}: job criado, aguardando a extensão de Chrome processar (pode levar um tempo — recarregue a tela depois).`)
   }
 
   async function consultarAuto() {
@@ -445,16 +446,20 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
     // pra não esbarrar no recycle de container do Render free em requisições
     // longas — cada tipo já é persistido no backend assim que resolve, então
     // atualiza a tela progressivamente em vez de um spinner único no final.
-    const tipos = itens.map(i => i.tipo)
     let falhaDeRede = false
-    for (const tipo of tipos) {
+    for (const item of itens) {
+      const tipo = item.tipo
       // Dívida Ativa é resolvida junto com o job de CND Federal — não
       // dispara consulta própria (evita duplicar emissão/job).
       if (tipo === 'DIVIDA_ATIVA') continue
 
       try {
-        if (tipo === 'CND_FEDERAL') {
-          await consultarViaJob()
+        if (item.viaFilaExtensao) {
+          if (tipo === 'CND_FEDERAL') {
+            await consultarViaJob(`/certidoes/jobs/${cnpj}`, 'CND Federal/Dívida Ativa')
+          } else if (tipo === 'MUNICIPAL') {
+            await consultarViaJob(`/certidoes/jobs-municipal-sp/${cnpj}`, 'Certidão Municipal (São Paulo)')
+          }
           continue
         }
         const res = await apiFetch(`/certidoes/consultar/${cnpj}/${tipo}`, { method: 'POST' })
@@ -463,8 +468,8 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
           setErroAuto((json as { message?: string }).message ?? `Erro ao consultar ${tipo}.`)
           continue
         }
-        const item = (await res.json()) as ChecklistItem
-        setItens(prev => prev.map(i => i.tipo === tipo ? item : i))
+        const itemAtualizado = (await res.json()) as ChecklistItem
+        setItens(prev => prev.map(i => i.tipo === tipo ? itemAtualizado : i))
       } catch {
         falhaDeRede = true
         setErroAuto('Erro de rede. Tente novamente.')

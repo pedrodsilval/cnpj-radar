@@ -7,10 +7,17 @@ export enum CertidaoJobStatus {
   ERRO = 'ERRO',
 }
 
+export enum CertidaoJobTipo {
+  CND_FEDERAL = 'CND_FEDERAL',
+  MUNICIPAL_SAO_PAULO = 'MUNICIPAL_SAO_PAULO',
+}
+
 // Fila consumida pela extensão de Chrome instalada no navegador do usuário —
-// CND Federal/Dívida Ativa só passam no hCaptcha da Receita rodando de
-// navegador real com IP residencial, impossível a partir do servidor (ver
-// certidoes-scraper.service.ts, consultarCndFederalHeadedLocal).
+// alguns portais só passam na checagem anti-bot rodando de navegador real
+// com IP residencial, impossível a partir do servidor. CND Federal/Dívida
+// Ativa: hCaptcha da Receita (ver certidoes-scraper.service.ts,
+// consultarCndFederalHeadedLocal). Municipal São Paulo: começou a resetar a
+// conexão em automação headless/datacenter (achado real 02/10/2026).
 @Entity('certidao_jobs')
 export class CertidaoJob {
   @PrimaryGeneratedColumn('uuid')
@@ -22,6 +29,9 @@ export class CertidaoJob {
 
   @Column({ type: 'varchar', length: 14 })
   cnpj: string;
+
+  @Column({ type: 'varchar', length: 30, default: CertidaoJobTipo.CND_FEDERAL })
+  tipo: CertidaoJobTipo;
 
   @Index()
   @Column({ type: 'varchar', length: 20, default: CertidaoJobStatus.PENDENTE })

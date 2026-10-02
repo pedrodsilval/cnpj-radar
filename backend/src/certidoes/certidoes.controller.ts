@@ -73,6 +73,20 @@ export class CertidoesController {
     return this.service.criarJobCndFederal(cnpj, req.user.id);
   }
 
+  @Post('jobs-municipal-sp/:cnpj')
+  criarJobMunicipalSaoPaulo(@Param('cnpj') cnpj: string, @Request() req: { user: { id: string } }) {
+    return this.service.criarJobMunicipalSaoPaulo(cnpj, req.user.id);
+  }
+
+  // Usado pela extensão pra resolver o captcha de imagem do formulário da
+  // prefeitura de SP (e o desafio anti-bot adicional da Prodam) — mesma
+  // infra de 2captcha/ONNX que os scrapers do servidor já usam, só que
+  // chamada a partir do navegador real do usuário.
+  @Post('resolver-captcha')
+  resolverCaptcha(@Body() body: { imagemBase64: string }) {
+    return this.service.resolverCaptchaImagem(body.imagemBase64).then((token) => ({ token }));
+  }
+
   @Get('jobs/proximo')
   proximoJob(@Request() req: { user: { id: string } }) {
     return this.service.proximoJobCndFederal(req.user.id);

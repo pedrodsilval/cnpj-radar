@@ -11,6 +11,7 @@ const POLL_ALARM = 'cnpj-radar-poll';
 const MIN_MS_ENTRE_TENTATIVAS = 2 * 60 * 60 * 1000; // 2h — espaçamento de segurança
 const SITES_AQUECIMENTO = ['https://www.google.com', 'https://www.uol.com.br', 'https://www.gov.br'];
 const URL_RECEITA = 'https://servicos.receitafederal.gov.br/servico/certidoes/';
+const URL_MUNICIPAL_SP = 'https://duc.prefeitura.sp.gov.br/certidoes/forms_anonimo/frmconsultaemissaocertificado.aspx';
 
 // 2min só decide de quanto em quanto tempo CONFERE a fila (chamada barata pro
 // nosso próprio backend, sem tocar a Receita) — o espaçamento de verdade
@@ -81,6 +82,30 @@ async function tentarProcessarJob({ ignorarEspacamento = false } = {}) {
 
   await chrome.storage.local.set({ ultimaExecucao: Date.now() });
 
+  if (job.tipo === 'MUNICIPAL_SAO_PAULO') {
+    await processarJobMunicipalSaoPaulo(job, token);
+  } else {
+    await processarJobCndFederal(job, token);
+  }
+}
+
+async function enviarResultado(job, token, resultado, pdfBase64) {
+  const fd = new FormData();
+  fd.append('status', resultado.status);
+  fd.append('mensagem', resultado.mensagem || '');
+  if (pdfBase64) {
+    const bytes = Uint8Array.from(atob(pdfBase64), (c) => c.charCodeAt(0));
+    fd.append('pdf', new Blob([bytes], { type: 'application/pdf' }), `job-${job.cnpj}.pdf`);
+  }
+  await fetch(`${API_BASE}/certidoes/jobs/${job.jobId}/resultado`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  await chrome.storage.local.set({ ultimoResultado: { status: resultado.status, mensagem: resultado.mensagem, em: Date.now() } });
+}
+
+async function processarJobCndFederal(job, token) {
   let tab;
   try {
     tab = await chrome.tabs.create({ url: 'about:blank', active: false });
@@ -113,24 +138,47 @@ async function tentarProcessarJob({ ignorarEspacamento = false } = {}) {
       }, 180_000);
     });
 
-    const fd = new FormData();
-    fd.append('status', resultado.status);
-    fd.append('mensagem', resultado.mensagem || '');
-    if (resultado.pdfBase64) {
-      const bytes = Uint8Array.from(atob(resultado.pdfBase64), (c) => c.charCodeAt(0));
-      fd.append('pdf', new Blob([bytes], { type: 'application/pdf' }), `cnd-federal-${job.cnpj}.pdf`);
-    }
+    await enviarResultado(job, token, resultado, resultado.pdfBase64);
+  } catch (err) {
+    console.error('[cnpj-radar] erro processando job CND Federal:', err);
+  } finally {
+    if (tab) chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
 
-    await fetch(`${API_BASE}/certidoes/jobs/${job.jobId}/resultado`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
+// Diferente do CND Federal (Angular, sem reload de página — um único
+// content script injetado basta), o portal de São Paulo é ASP.NET WebForms
+// clássico: cada submit navega de verdade. content-sp-municipal.js é um
+// content_script DECLARADO no manifest (reinjeta sozinho a cada navegação),
+// guiado pelo estado em chrome.storage.local — aqui só criamos a aba, já
+// com o job salvo ANTES de navegar (senão a primeira carga da página acha
+// storage vazio e fica inerte) e esperamos a mensagem de resultado.
+async function processarJobMunicipalSaoPaulo(job, token) {
+  let tab;
+  try {
+    await chrome.storage.local.set({ spMunicipalJob: { cnpj: job.cnpj, tentativa: 0, etapa: null } });
+    tab = await chrome.tabs.create({ url: 'about:blank', active: false });
+    await navegarEEsperar(tab.id, URL_MUNICIPAL_SP);
+
+    const resultado = await new Promise((resolve) => {
+      const listener = (msg, sender) => {
+        if (sender.tab && sender.tab.id === tab.id && msg.type === 'RESULTADO_MUNICIPAL_SP') {
+          chrome.runtime.onMessage.removeListener(listener);
+          resolve(msg);
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      setTimeout(() => {
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve({ status: 'INDISPONIVEL', mensagem: 'Timeout (3min) esperando o content script responder.' });
+      }, 180_000);
     });
 
-    await chrome.storage.local.set({ ultimoResultado: { status: resultado.status, mensagem: resultado.mensagem, em: Date.now() } });
+    await enviarResultado(job, token, resultado, null);
   } catch (err) {
-    console.error('[cnpj-radar] erro processando job:', err);
+    console.error('[cnpj-radar] erro processando job Municipal São Paulo:', err);
   } finally {
+    await chrome.storage.local.remove('spMunicipalJob');
     if (tab) chrome.tabs.remove(tab.id).catch(() => {});
   }
 }

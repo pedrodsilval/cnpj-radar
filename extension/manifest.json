@@ -9,7 +9,8 @@
     "https://servicos.receitafederal.gov.br/*",
     "https://www.google.com/*",
     "https://www.uol.com.br/*",
-    "https://www.gov.br/*"
+    "https://www.gov.br/*",
+    "https://duc.prefeitura.sp.gov.br/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -18,6 +19,11 @@
     {
       "matches": ["https://radar.everestcontabilidade.com/*"],
       "js": ["content-pareamento.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://duc.prefeitura.sp.gov.br/*"],
+      "js": ["content-sp-municipal.js"],
       "run_at": "document_idle"
     }
   ],

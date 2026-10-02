@@ -21,6 +21,8 @@ export interface ResultadoScraper {
   pendenciaReal?: boolean;
 }
 
+const FORM_URL_SAO_PAULO = 'https://duc.prefeitura.sp.gov.br/certidoes/forms_anonimo/frmconsultaemissaocertificado.aspx';
+
 @Injectable()
 export class CertidoesScraperService {
   private readonly logger = new Logger(CertidoesScraperService.name);
@@ -30,6 +32,17 @@ export class CertidoesScraperService {
     private readonly captchaClient: CaptchaClientService,
     private readonly storage: SupabaseStorageService,
   ) {}
+
+  // Usado pela extensão de Chrome: ela roda no navegador real do usuário
+  // (IP residencial, sem o bloqueio de automação que o servidor leva), mas
+  // não tem a chave do 2captcha nem o modelo ONNX local — manda a imagem
+  // pra cá e a gente resolve com a mesma infra que os scrapers já usam.
+  async resolverCaptchaImagemPublico(imageSrc: string): Promise<string | null> {
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) return null;
+    const { token } = await this.resolver2captchaImagem(imageSrc, apiKey);
+    return token;
+  }
 
   private async comBrowser<T>(fn: (browser: Browser) => Promise<T>): Promise<T> {
     const browser = await chromium.launch({
@@ -1105,6 +1118,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalLauroDeFreitas(cnpjLimpo, cga);
     }
 
+    if (munUpper.includes('SAO PAULO') && ufUpper === 'SP') {
+      return this.consultarCertidaoMunicipalSaoPaulo(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1577,6 +1594,173 @@ export class CertidoesScraperService {
   // Salva um Buffer de PDF no Supabase Storage e retorna a URL pública
   private async salvarPdfBuffer(buffer: Buffer, prefixo: string): Promise<string> {
     return this.storage.uploadPdf(buffer, prefixo);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — São Paulo (capital)
+  // Portal: https://duc.prefeitura.sp.gov.br/certidoes/forms_anonimo/frmconsultaemissaocertificado.aspx
+  // "Certidão Tributária Mobiliária", por CNPJ, sem login. CAPTCHA de imagem
+  // simples de 4 caracteres (campo #txtValorCaptcha) — resolvido via
+  // resolver2captchaImagem (o modelo ONNX local foi treinado só no estilo do
+  // captcha do CNDT/TST, não reconhece este; cai sempre pro 2captcha pago).
+  //
+  // Achado real (02/10/2026): em pelo menos uma execução apareceu, logo após
+  // o primeiro submit, um desafio anti-bot adicional de Prodam-SP ("Este
+  // desafio é para testar se você é um visitante legítimo...") — outro
+  // captcha de imagem de 6 caracteres, só que vindo de um sistema diferente
+  // do formulário em si. Resolvê-lo uma vez não evitou que ele reaparecesse
+  // numa navegação fresca logo depois — ou seja, ao contrário do que parecia
+  // a princípio, NÃO é algo "resolve uma vez por sessão": pode aparecer de
+  // novo a qualquer momento, inclusive antes mesmo do formulário carregar.
+  // Trata esse desafio dentro do mesmo loop de tentativas; se aparecer,
+  // resolve e tenta a consulta de novo do zero (ele devolve o formulário
+  // em branco, não dá pra só continuar de onde parou).
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalSaoPaulo(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Certidão Municipal São Paulo: cadastre uma chave 2captcha em Configurações → Credenciais para habilitar a automação (o portal usa CAPTCHA de imagem).',
+      };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser, true);
+      let ultimoErro: string | null = null;
+
+      for (let tentativa = 1; tentativa <= 4; tentativa++) {
+        try {
+          await page.goto(FORM_URL_SAO_PAULO, { waitUntil: 'networkidle', timeout: 30_000 });
+
+          // Desafio anti-bot da Prodam-SP — pode aparecer antes mesmo do
+          // formulário real carregar (ver comentário acima). Resolve e
+          // recarrega a página do zero nesta mesma tentativa.
+          let texto = (await page.innerText('body').catch(() => '')) ?? '';
+          if (/visitante leg[ií]timo/i.test(texto)) {
+            const resolvido = await this.resolverDesafioAntiBotSaoPaulo(page, apiKey);
+            if (!resolvido) {
+              ultimoErro = 'desafio anti-bot da Prodam-SP não resolvido';
+              continue;
+            }
+            await page.goto(FORM_URL_SAO_PAULO, { waitUntil: 'networkidle', timeout: 30_000 });
+          }
+
+          await page.locator('#ctl00_ConteudoPrincipal_ddlTipoCertidao').selectOption('1'); // Certidão Tributária Mobiliária
+          await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+          await page.locator('#ctl00_ConteudoPrincipal_ddlTipoDocumento').selectOption('CNPJ').catch(() => {});
+          await page.locator('#ctl00_ConteudoPrincipal_txtCNPJ').fill(cnpjLimpo);
+
+          const captchaBuffer = await page.locator('#ctl00_ConteudoPrincipal_imgCaptcha').screenshot();
+          const { token: resposta, erro: erroCaptcha } = await this.resolver2captchaImagem(
+            `data:image/png;base64,${captchaBuffer.toString('base64')}`,
+            apiKey,
+          );
+          if (!resposta) {
+            ultimoErro = `captcha não resolvido (${erroCaptcha})`;
+            this.logger.warn(`Certidão Municipal São Paulo tentativa ${tentativa}: ${ultimoErro}.`);
+            continue;
+          }
+          await page.locator('#ctl00_ConteudoPrincipal_txtValorCaptcha').fill(resposta);
+
+          await Promise.all([
+            page.waitForLoadState('networkidle', { timeout: 20_000 }),
+            page.locator('#ctl00_ConteudoPrincipal_btnEmitir').click(),
+          ]);
+
+          // "networkidle" às vezes resolve antes do postback ASP.NET
+          // terminar de renderizar o body (corpo vem vazio por um instante)
+          // — tentado ao vivo em 02/10/2026, deu INDISPONIVEL com texto=""
+          // na primeira leitura. Repolla por até ~4s antes de desistir.
+          for (let espera = 0; espera < 8; espera++) {
+            texto = ((await page.innerText('body').catch(() => '')) ?? '').replace(/\s+/g, ' ').trim();
+            if (texto) break;
+            await page.waitForTimeout(500);
+          }
+
+          if (/visitante leg[ií]timo/i.test(texto)) {
+            this.logger.log(`Certidão Municipal São Paulo tentativa ${tentativa}: desafio anti-bot apareceu após o submit.`);
+            const resolvido = await this.resolverDesafioAntiBotSaoPaulo(page, apiKey);
+            if (!resolvido) { ultimoErro = 'desafio anti-bot da Prodam-SP não resolvido após o submit'; continue; }
+            continue; // volta pro formulário em branco — tenta a consulta de novo
+          }
+
+          if (!texto) {
+            ultimoErro = 'página de resultado veio vazia após o submit (possível falha de automação, não resposta real do portal)';
+            this.logger.warn(`Certidão Municipal São Paulo tentativa ${tentativa}: ${ultimoErro}.`);
+            continue;
+          }
+
+          const resultado = this.parseCertidaoMunicipalSaoPaulo(texto);
+          this.logger.log(`Certidão Municipal São Paulo tentativa ${tentativa}: status=${resultado.status} texto="${texto.slice(0, 300)}"`);
+          return resultado;
+        } catch (err) {
+          ultimoErro = String(err);
+          this.logger.warn(`Certidão Municipal São Paulo tentativa ${tentativa} erro: ${err}`);
+        }
+      }
+
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: `Certidão Municipal São Paulo: não foi possível concluir a consulta após 4 tentativas. Último erro: ${ultimoErro ?? 'desconhecido'}.`,
+      };
+    });
+  }
+
+  // Resolve o desafio anti-bot genérico da Prodam-SP (captcha de imagem de
+  // 6 caracteres, sem relação com o formulário de certidão em si) e envia a
+  // resposta. Retorna true se o desafio foi submetido (não garante que foi
+  // aceito — quem chama confere o resultado seguinte).
+  private async resolverDesafioAntiBotSaoPaulo(page: Page, apiKey: string): Promise<boolean> {
+    try {
+      const imagem = page.locator('img').first();
+      const buffer = await imagem.screenshot({ timeout: 10_000 });
+      const { token: resposta, erro } = await this.resolver2captchaImagem(
+        `data:image/png;base64,${buffer.toString('base64')}`,
+        apiKey,
+      );
+      if (!resposta) {
+        this.logger.warn(`Desafio anti-bot São Paulo: captcha não resolvido (${erro}).`);
+        return false;
+      }
+      await page.locator('input[type="text"]').first().fill(resposta);
+      await Promise.all([
+        page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {}),
+        page.getByRole('button', { name: /submit/i }).click(),
+      ]);
+      return true;
+    } catch (err) {
+      this.logger.warn(`Desafio anti-bot São Paulo: erro ao resolver: ${err}`);
+      return false;
+    }
+  }
+
+  private parseCertidaoMunicipalSaoPaulo(texto: string): ResultadoScraper {
+    const lower = texto.toLowerCase();
+
+    // Confirmado contra empresa real com pendência (02/10/2026): o portal
+    // devolve essa frase + uma tabela de "Débitos Pendentes" por CCM.
+    if (lower.includes('não foi possivel emitir a certidão') || lower.includes('não foi possível emitir a certidão')) {
+      return {
+        status: 'IRREGULAR',
+        validade: null,
+        mensagem: `Certidão Municipal São Paulo: há pendências impeditivas para emissão da certidão. Resposta do site: ${texto.slice(0, 500)}`,
+        pendenciaReal: true,
+      };
+    }
+
+    // Não encontramos, em teste real, uma empresa sem pendências pra
+    // confirmar o texto exato (e se vem como PDF/download) da página de
+    // sucesso. Em vez de arriscar classificar como REGULAR por suposição —
+    // o mesmo tipo de erro corrigido no FGTS nesta sessão —, fica
+    // INDISPONIVEL até validarmos contra um caso real limpo.
+    return {
+      status: 'INDISPONIVEL',
+      validade: null,
+      mensagem: `Certidão Municipal São Paulo: resposta do portal ainda não validada pra empresa regular — verifique manualmente em ${FORM_URL_SAO_PAULO}. Texto: ${texto.slice(0, 500)}`,
+    };
   }
 
   // ---------------------------------------------------------------------------
