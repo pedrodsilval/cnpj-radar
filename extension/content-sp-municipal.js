@@ -10,24 +10,30 @@
 //
 // Achado real em produção (02/10/2026): um teste ao vivo disparou mais de
 // 130 chamadas de resolução de captcha em ~2min, mesmo com um limite de 4
-// tentativas por ramo do fluxo — a causa exata não foi confirmada (sem
-// acesso ao console da aba durante o incidente), mas o padrão bate com
-// alguma forma de reentrância/novas execuções de processar() não previstas
-// pelos contadores locais de cada ramo. Em vez de tentar adivinhar e
-// corrigir só o sintoma, o desenho abaixo centraliza TODA tentativa (de
-// qualquer ramo) em reservarTentativa(), que aplica três freios
-// independentes — intervalo mínimo entre tentativas, limite de tentativas
-// e um prazo total de parede — tornando esse tipo de disparada impossível
-// de sustentar não importa qual seja a causa raiz exata.
+// tentativas por ramo do fluxo -- a causa era ter um contador LOCAL por
+// ramo (desafio/preenchendo/reenviando/pagina_vazia), que não acumulava
+// entre ramos diferentes. Corrigido centralizando toda tentativa (de
+// qualquer ramo) em reservarTentativa(), com um único contador global
+// (`tentativas`) e um prazo total de parede (`PRAZO_TOTAL_MS`) -- sozinhos,
+// esses dois já limitam o job a no máximo MAX_TENTATIVAS tentativas reais
+// em até 90s, não importa quão rápido cada uma dispare.
+//
+// Uma tentativa de freio adicional (intervalo mínimo entre tentativas, pra
+// pegar "chamadas impossivelmente rápidas") foi testada e removida depois:
+// o portal de SP navega pra ele mesmo DUAS vezes seguidas logo na primeira
+// carga (confirmado com log de timestamp em 02/10/2026 -- três "navigate"
+// reais no Performance Navigation Timing, a 692ms e 531ms de distância,
+// bem abaixo de qualquer intervalo mínimo razoável). É comportamento normal
+// do site (provável fechamento de sessão/cookie), não loop -- um freio por
+// intervalo sempre vai ter falso positivo contra isso. O contador global +
+// prazo total já bastam.
 
 const ESTADO_KEY = 'spMunicipalJob';
-const MAX_TENTATIVAS = 3;
-// Uma navegação real (postback ASP.NET + render + reinjeção do content
-// script) nunca completa em menos de ~1-1.5s na prática — esse teto fica
-// abaixo disso de propósito, só pra pegar chamadas impossivelmente rápidas
-// (o padrão real do incidente: vários disparos no mesmo segundo), sem
-// arriscar derrubar um retry legítimo só por ter sido um pouco rápido.
-const INTERVALO_MINIMO_MS = 1_500;
+// 2 tentativas já são "gastas" pelo bounce duplo do portal antes do
+// preenchimento de verdade começar (achado 02/10/2026) -- 5 deixa margem
+// real pra reentradas de bounce + pelo menos uma tentativa de preenchimento
+// e um retry em caso de captcha rejeitado.
+const MAX_TENTATIVAS = 5;
 const PRAZO_TOTAL_MS = 90_000;
 
 function esperar(ms) {
@@ -110,22 +116,13 @@ async function reservarTentativa(job, etapa) {
     return null;
   }
 
-  if (job.ultimaTentativaEm && agora - job.ultimaTentativaEm < INTERVALO_MINIMO_MS) {
-    // processar() foi chamado rápido demais depois da tentativa anterior —
-    // não é um retry legítimo (nenhum caminho deste script tenta de novo
-    // antes de uma navegação real ou de pelo menos 1s de espera). Sinal de
-    // comportamento inesperado: para tudo em vez de insistir.
-    await finalizar({ status: 'INDISPONIVEL', mensagem: `Certidão Municipal São Paulo: tentativas seguidas rápidas demais na etapa "${etapa}" (possível loop) — parei por segurança.` });
-    return null;
-  }
-
   const tentativas = (job.tentativas || 0) + 1;
   if (tentativas > MAX_TENTATIVAS) {
     await finalizar({ status: 'INDISPONIVEL', mensagem: `Certidão Municipal São Paulo: desisti após ${MAX_TENTATIVAS} tentativas (etapa: ${etapa}).` });
     return null;
   }
 
-  const novoJob = { ...job, tentativas, ultimaTentativaEm: agora, etapa };
+  const novoJob = { ...job, tentativas, etapa };
   await chrome.storage.local.set({ [ESTADO_KEY]: novoJob });
   return novoJob;
 }
@@ -194,9 +191,9 @@ async function processar() {
 
       const resposta = await resolverCaptcha(imgCaptcha);
       if (!resposta) {
-        // reservarTentativa() já gravou tentativas/ultimaTentativaEm acima
-        // — o próximo processar() (pós-reload) já nasce respeitando o
-        // intervalo mínimo e o limite de tentativas automaticamente.
+        // reservarTentativa() já gravou o contador acima — o próximo
+        // processar() (pós-reload) já nasce respeitando o limite de
+        // tentativas automaticamente.
         location.reload();
         return;
       }
