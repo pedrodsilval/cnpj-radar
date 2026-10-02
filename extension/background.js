@@ -178,7 +178,7 @@ async function processarJobCndFederal(job, token) {
 async function processarJobMunicipalSaoPaulo(job, token) {
   let tab;
   try {
-    await chrome.storage.local.set({ spMunicipalJob: { cnpj: job.cnpj, tentativa: 0, etapa: null } });
+    await chrome.storage.local.set({ spMunicipalJob: { cnpj: job.cnpj, tentativas: 0, etapa: null, criadoEm: Date.now() } });
     tab = await chrome.tabs.create({ url: 'about:blank', active: false });
     await navegarEEsperar(tab.id, URL_MUNICIPAL_SP);
 

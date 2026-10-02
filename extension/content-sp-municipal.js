@@ -7,9 +7,28 @@
 // via chrome.scripting.executeScript como o da Receita — e guarda o estado
 // entre navegações em chrome.storage.local (chave ESTADO_KEY), não em
 // variável de módulo (que morreria no reload).
+//
+// Achado real em produção (02/10/2026): um teste ao vivo disparou mais de
+// 130 chamadas de resolução de captcha em ~2min, mesmo com um limite de 4
+// tentativas por ramo do fluxo — a causa exata não foi confirmada (sem
+// acesso ao console da aba durante o incidente), mas o padrão bate com
+// alguma forma de reentrância/novas execuções de processar() não previstas
+// pelos contadores locais de cada ramo. Em vez de tentar adivinhar e
+// corrigir só o sintoma, o desenho abaixo centraliza TODA tentativa (de
+// qualquer ramo) em reservarTentativa(), que aplica três freios
+// independentes — intervalo mínimo entre tentativas, limite de tentativas
+// e um prazo total de parede — tornando esse tipo de disparada impossível
+// de sustentar não importa qual seja a causa raiz exata.
 
 const ESTADO_KEY = 'spMunicipalJob';
-const MAX_TENTATIVAS = 4;
+const MAX_TENTATIVAS = 3;
+// Uma navegação real (postback ASP.NET + render + reinjeção do content
+// script) nunca completa em menos de ~1-1.5s na prática — esse teto fica
+// abaixo disso de propósito, só pra pegar chamadas impossivelmente rápidas
+// (o padrão real do incidente: vários disparos no mesmo segundo), sem
+// arriscar derrubar um retry legítimo só por ter sido um pouco rápido.
+const INTERVALO_MINIMO_MS = 1_500;
+const PRAZO_TOTAL_MS = 90_000;
 
 function esperar(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -29,14 +48,28 @@ async function esperarSeletor(seletor, timeoutMs = 10_000) {
   return null;
 }
 
-// Converte a imagem (captcha do form ou do desafio anti-bot) pra base64.
+// Achado real (02/10/2026): capturar a imagem do captcha logo que o
+// elemento aparece no DOM, sem esperar ela terminar de CARREGAR, gerava um
+// canvas 0x0 -- o 2captcha rejeitava com "ERROR_UPLOAD ... base64 data is
+// not a valid base64 image" (confirmado no log do servidor). img.complete
+// não é suficiente sozinho (fica true cedo demais em alguns casos) --
+// confere naturalWidth > 0 junto.
+async function esperarImagemCarregar(img, timeoutMs = 5_000) {
+  const inicio = Date.now();
+  while (Date.now() - inicio < timeoutMs) {
+    if (img.complete && img.naturalWidth > 0) return true;
+    await esperar(100);
+  }
+  return false;
+}
+
 // Imagens já inline (data:) vêm prontas; a do form vem como <img src="URL">
 // same-origin -- desenha num canvas pra extrair sem CORS taint.
 function imagemParaBase64(img) {
   if (img.src.startsWith('data:')) return img.src;
   const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth || img.width;
-  canvas.height = img.naturalHeight || img.height;
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
   canvas.getContext('2d').drawImage(img, 0, 0);
   return canvas.toDataURL('image/png');
 }
@@ -44,12 +77,13 @@ function imagemParaBase64(img) {
 // Não faz o fetch direto daqui: content scripts herdam o CSP da própria
 // página, e um site de governo costuma ter connect-src restritivo que
 // bloqueia requisições pra domínios externos (silenciosamente — cai no
-// .catch sem erro nenhum útil, foi exatamente o que aconteceu no primeiro
-// teste real em 02/10/2026). O service worker (background.js) não sofre
+// .catch sem erro nenhum útil). O service worker (background.js) não sofre
 // esse CSP, então pede a ele pra fazer a chamada.
 async function resolverCaptcha(img) {
+  const carregou = await esperarImagemCarregar(img);
+  if (!carregou) return null; // imagem nunca carregou -- não adianta tentar resolver
   const imagemBase64 = imagemParaBase64(img);
-  const resposta = await chrome.runtime.sendMessage({ type: 'RESOLVER_CAPTCHA', imagemBase64 }).catch((err) => ({ erro: String(err) }));
+  const resposta = await chrome.runtime.sendMessage({ type: 'RESOLVER_CAPTCHA', imagemBase64 }).catch(() => null);
   return resposta && resposta.token ? resposta.token : null;
 }
 
@@ -58,15 +92,42 @@ function selectComEvento(el, valor) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-async function avancarEstado(novoEstado) {
-  const { [ESTADO_KEY]: atual } = await chrome.storage.local.get(ESTADO_KEY);
-  if (!atual) return;
-  await chrome.storage.local.set({ [ESTADO_KEY]: { ...atual, ...novoEstado } });
-}
-
 async function finalizar(resultado) {
   await chrome.storage.local.remove(ESTADO_KEY);
   chrome.runtime.sendMessage({ type: 'RESULTADO_MUNICIPAL_SP', ...resultado }).catch(() => {});
+}
+
+// Único ponto que autoriza (ou não) uma nova tentativa, de qualquer ramo do
+// fluxo. Grava a reserva (contador + timestamp) ANTES de fazer qualquer
+// trabalho — é a trava que impede uma disparada de chamadas, não só uma
+// contagem informativa. Retorna o job atualizado (já persistido) se
+// autorizado, ou null se já finalizou (quem chamou deve retornar na hora).
+async function reservarTentativa(job, etapa) {
+  const agora = Date.now();
+
+  if (agora - (job.criadoEm || agora) > PRAZO_TOTAL_MS) {
+    await finalizar({ status: 'INDISPONIVEL', mensagem: `Certidão Municipal São Paulo: prazo total (${PRAZO_TOTAL_MS / 1000}s) esgotado na etapa "${etapa}".` });
+    return null;
+  }
+
+  if (job.ultimaTentativaEm && agora - job.ultimaTentativaEm < INTERVALO_MINIMO_MS) {
+    // processar() foi chamado rápido demais depois da tentativa anterior —
+    // não é um retry legítimo (nenhum caminho deste script tenta de novo
+    // antes de uma navegação real ou de pelo menos 1s de espera). Sinal de
+    // comportamento inesperado: para tudo em vez de insistir.
+    await finalizar({ status: 'INDISPONIVEL', mensagem: `Certidão Municipal São Paulo: tentativas seguidas rápidas demais na etapa "${etapa}" (possível loop) — parei por segurança.` });
+    return null;
+  }
+
+  const tentativas = (job.tentativas || 0) + 1;
+  if (tentativas > MAX_TENTATIVAS) {
+    await finalizar({ status: 'INDISPONIVEL', mensagem: `Certidão Municipal São Paulo: desisti após ${MAX_TENTATIVAS} tentativas (etapa: ${etapa}).` });
+    return null;
+  }
+
+  const novoJob = { ...job, tentativas, ultimaTentativaEm: agora, etapa };
+  await chrome.storage.local.set({ [ESTADO_KEY]: novoJob });
+  return novoJob;
 }
 
 function parseResultado(texto) {
@@ -80,18 +141,19 @@ function parseResultado(texto) {
 }
 
 async function processar() {
-  const { [ESTADO_KEY]: job } = await chrome.storage.local.get(ESTADO_KEY);
-  if (!job) return; // nenhum job ativo -- script fica inerte nessa navegação
+  const { [ESTADO_KEY]: jobAtual } = await chrome.storage.local.get(ESTADO_KEY);
+  if (!jobAtual) return; // nenhum job ativo -- script fica inerte nessa navegação
 
   const texto = textoVisivel();
 
   // Desafio anti-bot da Prodam-SP -- pode aparecer em qualquer navegação
-  // dentro do site, não só na primeira (achado real 02/10/2026).
+  // dentro do site, não só na primeira (achado real 02/10/2026). Em caso de
+  // falha ao resolver, finaliza em vez de recarregar (menos um caminho de
+  // retry = menos chance de loop, dado o incidente acima).
   if (/visitante leg[ií]timo/i.test(texto)) {
-    const tentativa = (job.tentativa || 0) + 1;
-    if (tentativa > MAX_TENTATIVAS) {
-      return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: desafio anti-bot da Prodam-SP reapareceu demais vezes, desisti.' });
-    }
+    const job = await reservarTentativa(jobAtual, 'desafio');
+    if (!job) return;
+
     const img = document.querySelector('img');
     const campo = document.querySelector('input[type="text"]');
     const botao = [...document.querySelectorAll('button, a, [role="button"]')].find((el) => /submit/i.test(el.textContent || ''));
@@ -100,9 +162,8 @@ async function processar() {
     }
     const resposta = await resolverCaptcha(img);
     if (!resposta) {
-      return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: não consegui resolver o captcha do desafio anti-bot (2captcha sem chave ou sem resposta).' });
+      return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: não consegui resolver o captcha do desafio anti-bot.' });
     }
-    await avancarEstado({ tentativa, etapa: 'desafio' });
     campo.value = resposta;
     campo.dispatchEvent(new Event('input', { bubbles: true }));
     botao.click();
@@ -112,7 +173,10 @@ async function processar() {
   // Formulário de emissão -- preenche e submete.
   const ddlTipo = document.getElementById('ctl00_ConteudoPrincipal_ddlTipoCertidao');
   if (ddlTipo) {
-    if (job.etapa !== 'formulario_preenchido') {
+    if (jobAtual.etapa !== 'formulario_preenchido') {
+      const job = await reservarTentativa(jobAtual, 'preenchendo');
+      if (!job) return;
+
       selectComEvento(ddlTipo, '1'); // Certidão Tributária Mobiliária
       const ddlDoc = await esperarSeletor('#ctl00_ConteudoPrincipal_ddlTipoDocumento', 8_000);
       if (ddlDoc) selectComEvento(ddlDoc, 'CNPJ');
@@ -130,29 +194,26 @@ async function processar() {
 
       const resposta = await resolverCaptcha(imgCaptcha);
       if (!resposta) {
-        const tentativa = (job.tentativa || 0) + 1;
-        if (tentativa > MAX_TENTATIVAS) {
-          return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: captcha do formulário não resolvido após várias tentativas.' });
-        }
-        await avancarEstado({ tentativa });
-        location.reload(); // pega um captcha novo
+        // reservarTentativa() já gravou tentativas/ultimaTentativaEm acima
+        // — o próximo processar() (pós-reload) já nasce respeitando o
+        // intervalo mínimo e o limite de tentativas automaticamente.
+        location.reload();
         return;
       }
 
       campoCaptcha.value = resposta;
       campoCaptcha.dispatchEvent(new Event('input', { bubbles: true }));
-      await avancarEstado({ etapa: 'formulario_preenchido' });
+      await chrome.storage.local.set({ [ESTADO_KEY]: { ...job, etapa: 'formulario_preenchido' } });
       btnEmitir.click();
       return; // próxima navegação é o resultado
     }
+
     // ddlTipo existe mas etapa já era "formulario_preenchido": o submit deu
-    // em algum erro de validação e voltou pro mesmo form sem navegar de
-    // verdade (ex. captcha rejeitado). Trata como tentativa nova.
-    const tentativa = (job.tentativa || 0) + 1;
-    if (tentativa > MAX_TENTATIVAS) {
-      return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: formulário recusou a submissão repetidamente (captcha rejeitado?).' });
-    }
-    await avancarEstado({ tentativa, etapa: null });
+    // em algum erro de validação e voltou pro mesmo form sem navegar pra
+    // uma página de resultado de verdade (ex. captcha rejeitado).
+    const job = await reservarTentativa(jobAtual, 'reenviando');
+    if (!job) return;
+    await chrome.storage.local.set({ [ESTADO_KEY]: { ...job, etapa: null } });
     location.reload();
     return;
   }
@@ -160,11 +221,8 @@ async function processar() {
   // Sem o formulário na tela e sem o desafio anti-bot -- deve ser a página
   // de resultado.
   if (!texto) {
-    const tentativa = (job.tentativa || 0) + 1;
-    if (tentativa > MAX_TENTATIVAS) {
-      return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: página de resultado veio vazia repetidas vezes.' });
-    }
-    await avancarEstado({ tentativa });
+    const job = await reservarTentativa(jobAtual, 'pagina_vazia');
+    if (!job) return;
     await esperar(1_000);
     return processar(); // tenta ler de novo antes de desistir dessa navegação
   }
