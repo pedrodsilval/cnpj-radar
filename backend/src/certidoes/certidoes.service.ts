@@ -211,7 +211,7 @@ export class CertidoesService {
                        : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
                        : CertidaoStatus.INDISPONIVEL;
 
-      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null, resultado.pendenciaReal);
     }
 
     return resultados;
@@ -239,7 +239,7 @@ export class CertidoesService {
       const novoStatus = resultado.status === 'REGULAR'     ? CertidaoStatus.REGULAR
                        : resultado.status === 'IRREGULAR'   ? CertidaoStatus.IRREGULAR
                        : CertidaoStatus.INDISPONIVEL;
-      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null, resultado.pendenciaReal);
     }
 
     const item = (await this.checklist(cnpj)).find((c) => c.tipo === tipo);
@@ -261,7 +261,7 @@ export class CertidoesService {
 
     const tipos = [CertidaoTipo.CND_FEDERAL, CertidaoTipo.DIVIDA_ATIVA];
     for (const tipo of tipos) {
-      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null);
+      await this.upsertCertidao(empresa.id, sanitized, tipo, novoStatus, resultado.validade, CertidaoOrigem.AUTOMATICO, resultado.urlArquivo ?? null, resultado.mensagem ?? null, resultado.pendenciaReal);
     }
 
     return (await this.checklist(cnpj)).filter((c) => tipos.includes(c.tipo));
@@ -565,6 +565,7 @@ ${blocos}${semPendencias}
     origem: CertidaoOrigem,
     urlArquivo: string | null = null,
     observacoes: string | null = null,
+    pendenciaReal = false,
   ): Promise<void> {
     let c = await this.certidaoRepo.findOne({ where: { empresaId, tipo } });
     if (!c) c = this.certidaoRepo.create({ empresaId, cnpj });
@@ -578,8 +579,14 @@ ${blocos}${semPendencias}
     // válida em mãos. Só deixa a falha derrubar um REGULAR anterior se a
     // validade dele já tiver vencido (aí sim não há mais nada de bom pra
     // proteger).
+    // Correção (02/10/2026, caso AGUIAR/FGTS): isso só vale pra falha de
+    // automação de verdade. Quando o scraper confirma `pendenciaReal`
+    // (o portal respondeu e apontou um problema real, não um erro de
+    // automação), a falha anterior tem que ser sobrescrita sempre — manter
+    // o REGULAR antigo esconderia um achado real do usuário.
     const mantendoResultadoAnterior =
       status === CertidaoStatus.INDISPONIVEL &&
+      !pendenciaReal &&
       c.status === CertidaoStatus.REGULAR &&
       !!c.validade &&
       c.validade >= new Date().toISOString().slice(0, 10);

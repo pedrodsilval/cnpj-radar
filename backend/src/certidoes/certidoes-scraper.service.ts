@@ -13,6 +13,12 @@ export interface ResultadoScraper {
   validade: string | null;
   mensagem: string;
   urlArquivo?: string | null;
+  // true só quando o portal respondeu de verdade com um resultado negativo
+  // (ex.: impedimento real) — diferencia de um INDISPONIVEL por falha da
+  // automação (timeout, captcha, site fora do ar), que não prova nada sobre
+  // o status real. upsertCertidao usa isso pra decidir se pode sobrescrever
+  // um REGULAR anterior ainda válido.
+  pendenciaReal?: boolean;
 }
 
 @Injectable()
@@ -249,7 +255,27 @@ export class CertidoesScraperService {
       return { status: 'INDISPONIVEL', validade: null, mensagem: 'Portal FGTS não retornou página de resultado.' };
     }
 
-    if (texto.includes('esta regular') || texto.includes('está regular')) {
+    // Checa ANTES do "está regular" solto: a mensagem de impedimento também
+    // contém essa frase, só que falando da regularidade na PGFN, não no FGTS
+    // — confirmado em produção 02/10/2026 contra um CNPJ real com pendência:
+    // "está REGULAR na Procuradoria-Geral da Fazenda Nacional - PGFN. Constam
+    // impedimentos na CAIXA para a comprovação da regularidade do empregador
+    // no FGTS." Sem essa checagem vir primeiro, isso classificava como
+    // REGULAR uma empresa com pendência de verdade.
+    if (texto.includes('impedimento') && texto.includes('fgts')) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Há impedimentos na Caixa para confirmar a regularidade no FGTS — requer verificação manual via Conectividade Social (conectividadesocialv2.caixa.gov.br).',
+        pendenciaReal: true,
+      };
+    }
+
+    // Frase usada quando a empresa está REALMENTE regular no FGTS (confirmado
+    // contra CNPJ limpo, com o link "Obtenha o Certificado de Regularidade do
+    // FGTS - CRF" presente na página) — mais específica que o "está regular"
+    // solto de antes, que dava falso positivo no caso de impedimento acima.
+    if (texto.includes('regular no fgts') || texto.includes('regular perante o fgts')) {
       // Portal não exibe data de validade do CRF na tela — validade está no PDF do certificado
       return { status: 'REGULAR', validade: null, mensagem: 'Empresa regular perante o FGTS (CRF).' };
     }
