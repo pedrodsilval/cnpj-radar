@@ -317,7 +317,7 @@ function CertidaoCard({ item, cnpj, expandido, onToggle, onSalvo }: CardProps) {
 
 // ─── CertidoesTab (exportado) ─────────────────────────────────────────────────
 
-export function CertidoesTab({ cnpj }: { cnpj: string }) {
+export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRelatorioGerado?: () => void }) {
   const [itens, setItens]                       = useState<ChecklistItem[]>([])
   const [carregando, setCarregando]             = useState(true)
   const [erro, setErro]                         = useState<string | null>(null)
@@ -443,6 +443,7 @@ export function CertidoesTab({ cnpj }: { cnpj: string }) {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
+      onRelatorioGerado?.()
     } catch {
       setErroAuto('Erro de rede ao gerar o relatório.')
     } finally {

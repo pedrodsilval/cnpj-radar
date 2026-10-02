@@ -7,6 +7,8 @@ import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao, CERTIDAO_LABELS, CertidaoStatus } from '../database/entities/certidao.entity';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
+import { SupabaseStorageService } from '../common/supabase-storage.service';
+import { RelatorioGerado } from './relatorio-gerado.entity';
 
 const STATUS_LABEL: Record<CertidaoStatus, string> = {
   [CertidaoStatus.REGULAR]: 'Regular',
@@ -55,7 +57,16 @@ export class RelatoriosService {
     @InjectRepository(Empresa) private readonly empresaRepo: Repository<Empresa>,
     @InjectRepository(Socio) private readonly socioRepo: Repository<Socio>,
     @InjectRepository(Certidao) private readonly certidaoRepo: Repository<Certidao>,
+    @InjectRepository(RelatorioGerado) private readonly relatorioGeradoRepo: Repository<RelatorioGerado>,
+    private readonly storage: SupabaseStorageService,
   ) {}
+
+  async listarGerados(cnpjBruto: string): Promise<RelatorioGerado[]> {
+    const cnpj = sanitizeCnpj(cnpjBruto);
+    const empresa = await this.empresaRepo.findOne({ where: { cnpj } });
+    if (!empresa) throw new NotFoundException('Empresa não encontrada.');
+    return this.relatorioGeradoRepo.find({ where: { empresaId: empresa.id }, order: { criadoEm: 'DESC' } });
+  }
 
   async gerarPreAnalisePdf(cnpjBruto: string): Promise<{ buffer: Buffer; nomeArquivo: string }> {
     const cnpj = sanitizeCnpj(cnpjBruto);
@@ -115,7 +126,21 @@ export class RelatoriosService {
     }
 
     const bufferFinal = Buffer.from(await documentoFinal.save());
-    return { buffer: bufferFinal, nomeArquivo: `pre-analise-${cnpj}.pdf` };
+    const nomeArquivo = `pre-analise-${cnpj}.pdf`;
+
+    // Salva no Storage e registra no histórico — sem isso o relatório só
+    // existia no download em si, não dava pra ver depois quais já tinham
+    // sido gerados nem quando.
+    try {
+      const urlArquivo = await this.storage.uploadPdf(bufferFinal, `pre-analise-${cnpj}`);
+      await this.relatorioGeradoRepo.save(this.relatorioGeradoRepo.create({ empresaId: empresa.id, urlArquivo, nomeArquivo }));
+    } catch (err) {
+      // Falhar ao salvar o histórico não deve impedir o usuário de baixar o
+      // relatório que acabou de ser gerado com sucesso.
+      this.logger.warn(`Não consegui salvar o histórico do relatório de ${cnpj}: ${err}`);
+    }
+
+    return { buffer: bufferFinal, nomeArquivo };
   }
 
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {

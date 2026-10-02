@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiFetch } from './auth'
+import { CertidoesTab } from './CertidoesTab'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,13 @@ interface PgdasDeclaracao {
   periodoApuracao: string
   rbt12: number
   receitaBrutaMes: number | null
+  nomeArquivo: string
+  criadoEm: string
+}
+
+interface RelatorioGerado {
+  id: string
+  urlArquivo: string
   nomeArquivo: string
   criadoEm: string
 }
@@ -93,6 +101,21 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
   const [erroPgdas, setErroPgdas] = useState<string | null>(null)
   const pgdasFileRef = useRef<HTMLInputElement>(null)
   const [arquivoPgdasSelecionado, setArquivoPgdasSelecionado] = useState<File | null>(null)
+
+  const [relatoriosGerados, setRelatoriosGerados] = useState<RelatorioGerado[]>([])
+  const [carregandoRelatorios, setCarregandoRelatorios] = useState(false)
+
+  const carregarRelatorios = useCallback(async () => {
+    if (!empresa) return
+    setCarregandoRelatorios(true)
+    try {
+      const res = await apiFetch(`/relatorios/gerados/${empresa.cnpj}`)
+      if (res.ok) setRelatoriosGerados(await res.json() as RelatorioGerado[])
+    } catch { /* silencioso — histórico não é crítico pro resto do modal */ }
+    finally { setCarregandoRelatorios(false) }
+  }, [empresa])
+
+  useEffect(() => { void carregarRelatorios() }, [carregarRelatorios])
 
   async function buscarDadosReceita() {
     const limpo = cnpj.replace(/\D/g, '')
@@ -364,6 +387,29 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
                 </button>
               </div>
               {erroPgdas && <p className="text-xs text-danger font-display font-bold mt-2">⚠ {erroPgdas}</p>}
+            </div>
+          )}
+
+          {editando && (
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-2">Certidões</p>
+              <CertidoesTab cnpj={empresa!.cnpj} onRelatorioGerado={carregarRelatorios} />
+
+              <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mt-4 mb-2">Relatórios de pré-análise gerados</p>
+              {carregandoRelatorios ? (
+                <p className="text-xs text-gray-400 font-body">Carregando…</p>
+              ) : relatoriosGerados.length > 0 ? (
+                <div className="space-y-1.5">
+                  {relatoriosGerados.map(r => (
+                    <div key={r.id} className="bg-gray-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs font-body">
+                      <span className="text-gray-500">{new Date(r.criadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                      <a href={r.urlArquivo} target="_blank" rel="noopener noreferrer" className="font-display font-bold text-primary hover:underline">Baixar</a>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 font-body">Nenhum relatório gerado ainda.</p>
+              )}
             </div>
           )}
         </div>

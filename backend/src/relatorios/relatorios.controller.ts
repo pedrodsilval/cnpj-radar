@@ -16,4 +16,9 @@ export class RelatoriosController {
     });
     res.send(buffer);
   }
+
+  @Get('gerados/:cnpj')
+  async listarGerados(@Param('cnpj') cnpj: string) {
+    return this.service.listarGerados(cnpj);
+  }
 }
