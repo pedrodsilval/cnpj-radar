@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { chromium } from 'playwright';
+import { PDFDocument } from 'pdf-lib';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao, CERTIDAO_LABELS, CertidaoStatus } from '../database/entities/certidao.entity';
@@ -48,6 +49,8 @@ function formatarDataHora(data: Date | null): string {
 
 @Injectable()
 export class RelatoriosService {
+  private readonly logger = new Logger(RelatoriosService.name);
+
   constructor(
     @InjectRepository(Empresa) private readonly empresaRepo: Repository<Empresa>,
     @InjectRepository(Socio) private readonly socioRepo: Repository<Socio>,
@@ -67,18 +70,52 @@ export class RelatoriosService {
     const html = this.montarHtml(empresa, socios, certidoes);
 
     const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    let capaPdf: Buffer;
     try {
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: 'load' });
-      const pdf = await page.pdf({
+      capaPdf = await page.pdf({
         format: 'A4',
         printBackground: true,
         margin: { top: '0', bottom: '0', left: '0', right: '0' },
       });
-      return { buffer: pdf, nomeArquivo: `pre-analise-${cnpj}.pdf` };
     } finally {
       await browser.close();
     }
+
+    // Junta a capa (dados + tabela-resumo) com o PDF oficial de cada certidão
+    // que já temos salvo — vira um único arquivo pra baixar, em vez de só
+    // listar o status e deixar o download de cada uma separado.
+    const documentoFinal = await PDFDocument.create();
+    const capa = await PDFDocument.load(capaPdf);
+    for (const p of (await documentoFinal.copyPages(capa, capa.getPageIndices()))) documentoFinal.addPage(p);
+
+    // CND Federal e Dívida Ativa são a mesma emissão (mesmo arquivo salvo
+    // duas vezes, uma por tipo) — sem isso o PDF saía com o mesmo documento
+    // duplicado.
+    const arquivosJaAnexados = new Set<string>();
+    const certidoesComArquivo = certidoes.filter((c) => {
+      if (!c.urlArquivo || arquivosJaAnexados.has(c.urlArquivo)) return false;
+      arquivosJaAnexados.add(c.urlArquivo);
+      return true;
+    });
+    for (const certidao of certidoesComArquivo) {
+      try {
+        const resposta = await fetch(certidao.urlArquivo!);
+        if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`);
+        const bytes = new Uint8Array(await resposta.arrayBuffer());
+        const docCertidao = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        for (const p of (await documentoFinal.copyPages(docCertidao, docCertidao.getPageIndices()))) documentoFinal.addPage(p);
+      } catch (err) {
+        // Um PDF individual corrompido ou indisponível não deve derrubar o
+        // relatório inteiro — só fica de fora, igual uma certidão que nunca
+        // foi consultada.
+        this.logger.warn(`Não consegui anexar o PDF de ${certidao.tipo} (${certidao.urlArquivo}): ${err}`);
+      }
+    }
+
+    const bufferFinal = Buffer.from(await documentoFinal.save());
+    return { buffer: bufferFinal, nomeArquivo: `pre-analise-${cnpj}.pdf` };
   }
 
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {
