@@ -161,7 +161,12 @@ async function processar() {
     if (!resposta) {
       return finalizar({ status: 'INDISPONIVEL', mensagem: 'Certidão Municipal São Paulo: não consegui resolver o captcha do desafio anti-bot.' });
     }
-    campo.value = resposta;
+    // Normaliza pra minúsculo (mesmo padrão já usado no CNDT) -- o 2captcha
+    // não recebe instrução de case (sem "regsense"), então pode devolver
+    // maiúsculo pra uma imagem que é minúscula (confirmado visualmente,
+    // achado 02/10/2026); se o portal validar case-sensitive, isso rejeitava
+    // uma resposta com os caracteres certos só por causa da caixa.
+    campo.value = resposta.toLowerCase();
     campo.dispatchEvent(new Event('input', { bubbles: true }));
     botao.click();
     return; // próxima navegação continua o fluxo
@@ -198,7 +203,7 @@ async function processar() {
         return;
       }
 
-      campoCaptcha.value = resposta;
+      campoCaptcha.value = resposta.toLowerCase();
       campoCaptcha.dispatchEvent(new Event('input', { bubbles: true }));
       await chrome.storage.local.set({ [ESTADO_KEY]: { ...job, etapa: 'formulario_preenchido' } });
       btnEmitir.click();

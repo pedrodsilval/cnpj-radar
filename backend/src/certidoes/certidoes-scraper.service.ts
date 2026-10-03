@@ -1662,7 +1662,11 @@ export class CertidoesScraperService {
             this.logger.warn(`Certidão Municipal São Paulo tentativa ${tentativa}: ${ultimoErro}.`);
             continue;
           }
-          await page.locator('#ctl00_ConteudoPrincipal_txtValorCaptcha').fill(resposta);
+          // Normaliza pra minúsculo (mesmo padrão do CNDT) -- 2captcha não
+          // recebe "regsense", pode devolver maiúsculo pra imagem minúscula
+          // (confirmado visualmente, achado 02/10/2026); extensão de Chrome
+          // tem o mesmo fix em content-sp-municipal.js.
+          await page.locator('#ctl00_ConteudoPrincipal_txtValorCaptcha').fill(resposta.toLowerCase());
 
           await Promise.all([
             page.waitForLoadState('networkidle', { timeout: 20_000 }),
@@ -1725,7 +1729,7 @@ export class CertidoesScraperService {
         this.logger.warn(`Desafio anti-bot São Paulo: captcha não resolvido (${erro}).`);
         return false;
       }
-      await page.locator('input[type="text"]').first().fill(resposta);
+      await page.locator('input[type="text"]').first().fill(resposta.toLowerCase());
       await Promise.all([
         page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {}),
         page.getByRole('button', { name: /submit/i }).click(),
