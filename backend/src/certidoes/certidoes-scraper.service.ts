@@ -1122,6 +1122,14 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalSaoPaulo(cnpjLimpo);
     }
 
+    if (munUpper.includes('ENTRE RIOS') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalSaatri(cnpjLimpo, 'https://entrerios.saatri.com.br', 'Entre Rios-BA');
+    }
+
+    if (munUpper.includes('DIAS') && munUpper.includes('AVILA') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalSaatri(cnpjLimpo, 'https://diasdavila.saatri.com.br', "Dias d'Ávila-BA");
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1765,6 +1773,94 @@ export class CertidoesScraperService {
       validade: null,
       mensagem: `Certidão Municipal São Paulo: resposta do portal ainda não validada pra empresa regular — verifique manualmente em ${FORM_URL_SAO_PAULO}. Texto: ${texto.slice(0, 500)}`,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Entre Rios-BA e Dias d'Ávila-BA (sistema SAATRI/ADM
+  // Sistemas, mesmo software nas duas cidades — portal em
+  // https://<cidade>.saatri.com.br). Sem login, sem captcha (confirmado
+  // visualmente em 03/10/2026). Fluxo na tela "Início": seleciona "Empresa"
+  // no combo "Certidão de:" (#Pint_TipoCertidao, value "3"), preenche
+  // CPF/CNPJ (#txt_CpfCnpjCertidao) e clica "Emitir CND"
+  // (#btn_ConsultarContribuinteCnd).
+  //
+  // Três respostas observadas ao vivo pra esse clique:
+  // 1. Empresa com pendência fiscal: mostra um modal jQuery UI "Aviso:
+  //    Impedimento na emissão" com o motivo — inclui o nome da empresa e a
+  //    Inscrição Municipal, úteis mesmo sem emitir (confirmado com CNPJ real,
+  //    03/10/2026: "SELARIA DO VAQUEIRO...LTDA (000.003.016/116-40)... são
+  //    insuficientes para a emissão de certidão por meio da Internet").
+  // 2. CNPJ não encontrado: navega pra /Certidao/Emitir com o combo
+  //    "Inscrição Municipal" (#cbb_IdContribuinteCertidao) vazio.
+  // 3. Empresa regular: ainda não confirmado com um caso real (o CNPJ de
+  //    teste disponível caiu no caso 1) — a suposição é que o combo vem
+  //    populado e falta só selecionar e clicar "Emitir"
+  //    (#btn_EmitirCertidao). Não arrisca declarar REGULAR sem validar contra
+  //    um caso limpo de verdade (mesma cautela do Município de São Paulo).
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalSaatri(cnpjLimpo: string, baseUrl: string, nomeCidade: string): Promise<ResultadoScraper> {
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(`${baseUrl}/Inicio`, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        // Popup de "Novidades/Atualização" pode abrir sozinho ao carregar
+        // (confirmado em Dias d'Ávila, 03/10/2026) -- bloqueia clique no
+        // formulário se não fechar antes.
+        const popupAberto = page.locator('.ui-dialog:visible .ui-dialog-titlebar-close').first();
+        if (await popupAberto.isVisible().catch(() => false)) {
+          await popupAberto.click();
+        }
+
+        // force:true -- o <select> nativo fica escondido atrás de um widget
+        // visual estilizado (confirmado via teste real, Playwright recusa
+        // selectOption sem isso porque considera o elemento "not visible").
+        await page.selectOption('#Pint_TipoCertidao', '3', { force: true }); // Empresa
+        await page.locator('#txt_CpfCnpjCertidao').fill(cnpjLimpo);
+        await page.locator('#btn_ConsultarContribuinteCnd').click();
+
+        const resultado = await Promise.race([
+          page.waitForSelector('.ui-dialog:visible', { timeout: 15_000 }).then(() => 'modal' as const),
+          page.waitForURL('**/Certidao/Emitir**', { timeout: 15_000 }).then(() => 'navegacao' as const),
+        ]).catch(() => null);
+
+        if (resultado === 'modal') {
+          const textoModal = (await page.locator('.ui-dialog:visible').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Certidão Municipal ${nomeCidade}: ${textoModal || 'impedimento na emissão, motivo não capturado no modal de aviso'}.`,
+          };
+        }
+
+        if (resultado !== 'navegacao') {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal ${nomeCidade}: sem resposta do portal após consultar o CNPJ (timeout).` };
+        }
+
+        const combo = page.locator('#cbb_IdContribuinteCertidao');
+        const opcoes = (await combo.locator('option').allTextContents().catch(() => [])).map((o) => o.trim()).filter(Boolean);
+
+        if (opcoes.length === 0) {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal ${nomeCidade}: CNPJ não encontrado no cadastro do município.` };
+        }
+
+        await combo.selectOption({ index: 0 });
+        await page.locator('#btn_EmitirCertidao').click();
+        await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+        const texto = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Municipal ${nomeCidade}: resposta do portal ainda não validada pra empresa regular — verifique manualmente em ${baseUrl}/Inicio. Texto: ${texto.slice(0, 500)}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal ${nomeCidade} erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal ${nomeCidade}: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------
