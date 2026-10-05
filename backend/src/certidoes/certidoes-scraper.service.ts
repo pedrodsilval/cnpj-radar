@@ -1158,6 +1158,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalSaoVicente(cnpjLimpo, cga);
     }
 
+    if (munUpper.includes('RIO DE JANEIRO') && ufUpper === 'RJ') {
+      return this.consultarCertidaoMunicipalRioDeJaneiro(cnpjLimpo, cga);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2661,6 +2665,158 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal São Vicente-SP erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal São Vicente-SP: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Rio de Janeiro-RJ (ISS, Secretaria Municipal de Fazenda)
+  // https://www2.rio.rj.gov.br/smf/forms/pesquisa.asp
+  // Formulário ASP clássico (POST pra si mesmo). Mesmo bloqueio estrutural de
+  // São Vicente-SP e Camaçari-BA: o campo "Inscrição Municipal"
+  // (name="numinscricaoiss") é um código de SÓ 8 DÍGITOS -- não é o CNPJ e
+  // não é derivável dele por nenhuma via pública direta. MAS existe um
+  // atalho real: a página "Lista de Prestadores" do Nota Carioca
+  // (notacarioca.rio.gov.br/gmaps/listaprestadores.aspx), ao buscar por
+  // CNPJ, embute a Inscrição Municipal no onclick do ícone de mapa de cada
+  // resultado -- window.open('/gmaps/prestadordetalhesite.aspx?inscricao=NNNNNNNN') --
+  // mesmo sem aparecer como texto visível na página. Essa lista só cobre
+  // prestadores cadastrados pra emissão de DSPREST (não é universal), mas
+  // resolveu pro CNPJ de teste. `cga` (reaproveitado aqui como Inscrição
+  // Municipal, mesmo papel de "código auxiliar externo" dos outros
+  // municípios) é OBRIGATÓRIO -- sem ele, nem abre o browser.
+  //
+  // Também exige um e-mail (campo "email", sem validação visível de posse
+  // -- é só onde a prefeitura manda protocolo). Vem de env var
+  // RIO_CERTIDAO_EMAIL, mesma decisão do usuário de não fixar dado de
+  // contato no código (05/10/2026, aplicada originalmente ao requerente de
+  // São Vicente-SP).
+  //
+  // Captcha é imagem servida por endpoint dinâmico (captcha.asp, sem
+  // data-URI) -- mesmo padrão do Manaus-AM: screenshot do elemento +
+  // resolver2captchaImagem.
+  //
+  // VALIDADO AO VIVO PONTA A PONTA (05/10/2026), CNPJ real 62.589.520/0001-39
+  // (Eduardo Pinheiro Psicologia e Arte Ltda, inscrição 16004430, achada via
+  // Lista de Prestadores): captcha resolvido, formulário aceito, caminho
+  // REGULAR confirmado -- resultado real foi "CERTIDÃO NEGATIVA DE DÉBITO
+  // DO IMPOSTO SOBRE SERVIÇOS DE QUALQUER NATUREZA", com "VALIDADE:
+  // 03/01/2027" no corpo do texto.
+  //
+  // Achado importante durante a validação: o botão final ("Imprimir
+  // Certidão") envia um <form target="certidao"> que chama window.print()
+  // assim que a nova janela carrega -- em um browser com UI de verdade
+  // (como o usado pra explorar isso manualmente) isso trava esperando o
+  // diálogo de impressão. Contornado substituindo window.print por um
+  // no-op via page.evaluate ANTES de clicar, e forçando target="_self" pra
+  // navegar na mesma aba em vez de abrir janela nova -- assim dá pra ler o
+  // texto da página final e gerar o PDF com page.pdf() sem depender de
+  // captura de popup. Abordagem já usada em outras certidões deste arquivo
+  // (ex.: Certidão Municipal Salvador).
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalRioDeJaneiro(cnpjLimpo: string, inscricaoMunicipal?: string | null): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://www2.rio.rj.gov.br/smf/forms/pesquisa.asp';
+
+    if (!inscricaoMunicipal) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: `Certidão Municipal Rio de Janeiro-RJ: o portal exige a Inscrição Municipal (8 dígitos) da empresa, que não é derivável do CNPJ. Emita manualmente em ${FORM_URL}.`,
+      };
+    }
+
+    const email = process.env.RIO_CERTIDAO_EMAIL;
+    if (!email) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Certidão Municipal Rio de Janeiro-RJ: configure RIO_CERTIDAO_EMAIL no ambiente (e-mail usado no pedido de certidão).',
+      };
+    }
+
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Rio de Janeiro-RJ: chave do 2captcha não cadastrada. Emita manualmente em ${FORM_URL}.` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.locator('#numinscricaoiss').fill(inscricaoMunicipal);
+        await page.locator('#email').fill(email);
+
+        const MAX_TENTATIVAS_CAPTCHA = 3;
+        for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CAPTCHA; tentativa++) {
+          const imgCaptcha = page.locator('img[src*="captcha" i]').first();
+          const buffer = await imgCaptcha.screenshot({ timeout: 10_000 });
+          const { token: resposta, erro } = await this.resolver2captchaImagem(`data:image/png;base64,${buffer.toString('base64')}`, apiKey);
+          if (!resposta) {
+            this.logger.warn(`Certidão Municipal Rio de Janeiro-RJ tentativa ${tentativa}: captcha não resolvido (${erro}).`);
+            continue;
+          }
+
+          await page.locator('#texto_imagem').fill('');
+          await page.locator('#texto_imagem').fill(resposta);
+          // Botões são <input type="button"/"submit">, sem texto filho --
+          // hasText não funciona aqui (só olha textContent, e o rótulo está
+          // no atributo value). Confirmado inspecionando o DOM ao vivo.
+          await page.locator('input[type="button"][value="Enviar"]').click();
+          await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+
+          const chegouNaConfirmacao = /certxprot\.asp/i.test(page.url());
+          if (!chegouNaConfirmacao) {
+            const textoErro = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+            this.logger.warn(`Certidão Municipal Rio de Janeiro-RJ tentativa ${tentativa}: não avançou pra confirmação (${textoErro.slice(0, 200)}).`);
+            await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+            await page.locator('#numinscricaoiss').fill(inscricaoMunicipal);
+            await page.locator('#email').fill(email);
+            continue;
+          }
+
+          // Neutraliza window.print() e força a 2ª etapa a navegar na MESMA
+          // aba (em vez de abrir "janela certidao") -- ver nota grande acima.
+          await page.evaluate(() => {
+            window.print = () => {};
+            const form = document.querySelector('form');
+            if (form) form.target = '_self';
+          });
+          await page.locator('input[name="imprime"]').click();
+          await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+
+          const textoFinal = (await page.innerText('body').catch(() => '')).replace(/[ \t]+/g, ' ').trim();
+          const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
+          const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-rio-de-janeiro-${cnpjLimpo}`);
+          const validade = this.extrairData(textoFinal);
+
+          const normalizado = textoFinal.toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+          if (normalizado.includes('CERTIDAO NEGATIVA')) {
+            return { status: 'REGULAR', validade, mensagem: 'Certidão Negativa de Débito do ISS (Rio de Janeiro-RJ) emitida com sucesso.', urlArquivo };
+          }
+          if (normalizado.includes('EFEITO') && normalizado.includes('NEGATIVA')) {
+            return { status: 'INDISPONIVEL', validade, mensagem: `Certidão Municipal Rio de Janeiro-RJ: positiva com efeito de negativa (débito com exigibilidade suspensa) -- requer análise manual. PDF: ${urlArquivo}` };
+          }
+          if (normalizado.includes('CERTIDAO POSITIVA')) {
+            return { status: 'IRREGULAR', validade, mensagem: `Certidão Municipal Rio de Janeiro-RJ: certidão positiva (débito em aberto). PDF: ${urlArquivo}` };
+          }
+          if (normalizado.includes('NAO CONTRIBUINTE') || normalizado.includes('NAO-CONTRIBUINTE')) {
+            return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Rio de Janeiro-RJ: inscrição consta como não-contribuinte de ISS -- verifique se a inscrição informada está correta. PDF: ${urlArquivo}` };
+          }
+
+          return {
+            status: 'INDISPONIVEL',
+            validade,
+            mensagem: `Certidão Municipal Rio de Janeiro-RJ: tipo de certidão não reconhecido pelo parser -- verifique manualmente. PDF: ${urlArquivo}`,
+          };
+        }
+
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Rio de Janeiro-RJ: captcha não resolvido após ${MAX_TENTATIVAS_CAPTCHA} tentativas.` };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Rio de Janeiro-RJ erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Rio de Janeiro-RJ: ${err}` };
       } finally {
         await page.context().close();
       }
