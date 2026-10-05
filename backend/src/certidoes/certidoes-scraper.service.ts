@@ -1162,6 +1162,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalRioDeJaneiro(cnpjLimpo, cga);
     }
 
+    if (munUpper.includes('SAO SEBASTIAO DO CAI') && ufUpper === 'RS') {
+      return this.consultarDebitosSaoSebastiaoDoCai(cnpjLimpo, cga);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2817,6 +2821,72 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal Rio de Janeiro-RJ erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Rio de Janeiro-RJ: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // São Sebastião do Caí-RS — NÃO é uma certidão, é uma consulta de débitos
+  // https://pmsscai.multi24h.com.br/multi24/sistemas/portal/ (plataforma Multi24h)
+  // Confirmado ao vivo (05/10/2026): a emissão oficial da certidão
+  // ("Emitir Certidões (Imóvel/Geral)") exige LOGIN com usuário e senha do
+  // contribuinte -- não existe busca pública/anônima por CNPJ, diferente de
+  // toda outra certidão municipal já automatizada neste arquivo. Sem as
+  // credenciais de cada cliente (que a Everest/FK's não tem e não deveria
+  // guardar em massa), não tem como automatizar a emissão oficial. Mesmo
+  // tratamento dado ao NFSe de Salvador (ver consultarInscricaoMunicipal).
+  //
+  // Existe, porém, uma "Consulta de Débitos" PÚBLICA (sem login) no mesmo
+  // portal -- só que ela também não aceita CNPJ sozinho: o campo "Número de
+  // Cadastro/Inscrição" é obrigatório (confirmado via mensagem de validação
+  // real: "Informe o cadastro para consulta"), o CPF/CNPJ é só opcional.
+  // Por decisão do usuário (05/10/2026), essa função foi escrita mesmo sem
+  // nenhum CNPJ/cadastro de teste disponível para validar o resultado real
+  // -- com a ressalva explícita de que NÃO é o documento oficial. Por isso
+  // o status desta função NUNCA é REGULAR/IRREGULAR: mesmo encontrando ou
+  // não um débito, isso não é prova de regularidade fiscal (Regra #11 do
+  // projeto) nem substitui a certidão de verdade -- só INDISPONIVEL com o
+  // texto bruto da consulta na mensagem, pra um humano interpretar.
+  //
+  // `cga` aqui é reaproveitado como "Número de Cadastro/Inscrição" (mesmo
+  // papel de código auxiliar externo por empresa que tem nos outros
+  // municípios) -- OBRIGATÓRIO, sem ele nem abre o browser.
+  // ---------------------------------------------------------------------------
+  private async consultarDebitosSaoSebastiaoDoCai(cnpjLimpo: string, numeroCadastro?: string | null): Promise<ResultadoScraper> {
+    const PORTAL_URL = 'https://pmsscai.multi24h.com.br/multi24/sistemas/portal/';
+    const LOGIN_INFO =
+      'A emissão oficial da certidão municipal de São Sebastião do Caí-RS exige login com usuário e senha do contribuinte no portal ' +
+      `${PORTAL_URL} -- não há busca pública por CNPJ. Emita manualmente com as credenciais do cliente.`;
+
+    if (!numeroCadastro) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `${LOGIN_INFO} (A consulta de débitos sem login também exige o Número de Cadastro/Inscrição da empresa, que não foi informado.)` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(PORTAL_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.locator('a').filter({ hasText: 'Consulta Débitos' }).first().click();
+        await page.waitForTimeout(1_000);
+
+        await page.locator('#seletor_base_atalho').selectOption('2'); // 2 = ISSQN
+        if (cnpjLimpo) await page.locator('#input_cpf_cnpj').fill(cnpjLimpo);
+        await page.locator('#numero_cadastro').fill(numeroCadastro);
+
+        await page.locator('#consulta_debitos_portal').click();
+        await page.waitForTimeout(3_000);
+
+        const texto = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `${LOGIN_INFO} Consulta de débitos (informal, não é a certidão oficial) retornou: "${texto.slice(0, 500)}"`,
+        };
+      } catch (err) {
+        this.logger.warn(`Consulta de débitos São Sebastião do Caí-RS erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `${LOGIN_INFO} Erro ao tentar a consulta de débitos informal: ${err}` };
       } finally {
         await page.context().close();
       }
