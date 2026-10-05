@@ -1138,6 +1138,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalSantoAmaro(cnpjLimpo);
     }
 
+    if (munUpper.includes('JUAZEIRO') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalJuazeiro(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2072,6 +2076,143 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal Santo Amaro-BA erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Santo Amaro-BA: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Juazeiro-BA (sistema WebRun/Sudoeste Informática —
+  // mesma plataforma do Lauro de Freitas, ver consultarCertidaoMunicipalLauroDeFreitas
+  // acima). Sem login, mas com reCAPTCHA v2 (resolvido via
+  // resolver2captchaRecaptcha(), já usado e comprovado em produção pro
+  // Lauro de Freitas).
+  //
+  // Link do formulário NÃO é alcançável navegando o menu do sistema (que
+  // pede login) -- achado navegando o site institucional da prefeitura
+  // (juazeiro.ba.gov.br → Tributário → Empresa → "Certidões"), que linka
+  // direto pro formulário anônimo:
+  // https://trbpmjuazeiro.sudoesteinformatica.com.br/webrun/form.jsp?sys=TPC&dataConnection=PM_Juazeiro&action=openform&formID={513A6F39-5238-4910-9E9B-FBB1DB9A95F5}&align=0&mode=-1&goto=-1&filter=&scrolling=no
+  //
+  // Achado real (04/10/2026) que CORRIGE um relatório de pesquisa anterior
+  // desta sessão: o form tem um combo "Tipo de Pesquisa" com 4 opções --
+  // Inscrição / Inscrição Anterior / CPF / **CNPJ** -- ou seja, aceita CNPJ
+  // direto, não exige Inscrição Municipal previamente cadastrada (ao
+  // contrário do que foi concluído antes sem inspecionar o combo de perto).
+  //
+  // Estrutura confirmada via Playwright real (não só inspeção visual): o
+  // formulário vive num <iframe> (openform.do); radio[0] (a ~x=438) é
+  // "Débitos" (Tipo de Certidão/Serviço); select com as 4 opções acima é o
+  // "Tipo de Pesquisa"; um único <input type=text> fica visível por vez
+  // (muda de significado conforme o Tipo de Pesquisa); sitekey do reCAPTCHA
+  // confirmado via atributo data-sitekey:
+  // 6Lf2jAgTAAAAAEXgPiCOT-bLwP9GndAvxfLRJVEu.
+  //
+  // NÃO VALIDADO AO VIVO: a resolução do reCAPTCHA e o resultado da busca
+  // (decisão consciente -- testar isso exigiria ler a chave do 2captcha de
+  // produção a partir de um script solto, e preferi não fazer isso sem
+  // confirmar com o usuário; ele optou por não autorizar). O mecanismo de
+  // resolver2captchaRecaptcha() já é comprovado em produção (Lauro de
+  // Freitas), então o risco está mais em como o RESULTADO da pesquisa se
+  // comporta (teor do "Emitir Certidão" / mensagens de erro) do que no
+  // captcha em si -- trata com a mesma cautela já usada nas outras cidades.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalJuazeiro(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://trbpmjuazeiro.sudoesteinformatica.com.br/webrun/form.jsp?sys=TPC&dataConnection=PM_Juazeiro&action=openform&formID=%7B513A6F39-5238-4910-9E9B-FBB1DB9A95F5%7D&align=0&mode=-1&goto=-1&filter=&scrolling=no';
+    const SITEKEY = '6Lf2jAgTAAAAAEXgPiCOT-bLwP9GndAvxfLRJVEu';
+
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Juazeiro-BA: chave do 2captcha não cadastrada. Emita manualmente em ${FORM_URL}.` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.waitForTimeout(2_000); // formulário carrega dentro do iframe de forma assíncrona
+
+        const frame = page.frames().find((f) => f.url().includes('openform.do'));
+        if (!frame) {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Juazeiro-BA: iframe do formulário não carregou.` };
+        }
+
+        const radios = frame.locator('input[type=radio]');
+        await radios.first().click(); // "Débitos" (confirmado real: radio mais à esquerda)
+
+        const comboTipoPesquisa = frame.locator('select').filter({ has: frame.locator('option', { hasText: '04 - CNPJ' }) });
+        await comboTipoPesquisa.selectOption({ label: '04 - CNPJ' });
+        await page.waitForTimeout(500);
+
+        const campoDocumento = frame.locator('input[type=text]:visible').first();
+        await campoDocumento.fill(cnpjLimpo);
+
+        const { token, erro } = await this.resolver2captchaRecaptcha(apiKey, SITEKEY, FORM_URL);
+        if (!token) {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Juazeiro-BA: reCAPTCHA não resolvido (${erro}).` };
+        }
+        await frame.evaluate((tok) => {
+          const ta = document.getElementById('g-recaptcha-response') as HTMLTextAreaElement | null;
+          if (ta) { ta.value = tok; ta.dispatchEvent(new Event('change')); }
+        }, token);
+
+        await frame.getByRole('button', { name: 'Pesquisar Inscrição' }).click();
+        await page.waitForTimeout(3_000);
+
+        const textoResultado = (await frame.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+
+        if (/n(ã|a)o (foi )?encontrad|n(ã|a)o localizad|inv[aá]lid[oa]|n(ã|a)o cadastrad/i.test(textoResultado)) {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Juazeiro-BA: CNPJ não encontrado no cadastro do município. Resposta: ${textoResultado.slice(0, 300)}` };
+        }
+
+        const btnEmitir = frame.getByRole('button', { name: 'Emitir Certidão' });
+        if (await btnEmitir.count() === 0) {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Juazeiro-BA: resposta do portal não reconhecida (sem botão "Emitir Certidão" nem mensagem de erro conhecida). Texto: ${textoResultado.slice(0, 500)}` };
+        }
+
+        // Contribuinte encontrado -- clica em Emitir e tenta capturar o PDF,
+        // mesmo padrão de captura (resposta application/pdf ou download) já
+        // usado no Lauro de Freitas. Não confirmado ao vivo (ver nota acima).
+        let capturedPdf: Buffer | null = null;
+        const context = page.context();
+        const onResponse = (response: import('playwright').Response) => {
+          if (capturedPdf) return;
+          if ((response.headers()['content-type'] ?? '').includes('application/pdf')) {
+            response.body().then((b) => { capturedPdf = b; }).catch(() => {});
+          }
+        };
+        context.on('response', onResponse);
+        context.on('page', (p) => p.on('response', onResponse));
+
+        const [novaPagina] = await Promise.all([
+          context.waitForEvent('page', { timeout: 15_000 }).catch(() => null),
+          btnEmitir.first().click(),
+        ]);
+        const paginaResultado = novaPagina ?? page;
+        await paginaResultado.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+        await page.waitForTimeout(1_500);
+        context.off('response', onResponse);
+
+        if (capturedPdf) {
+          const urlArquivo = await this.storage.uploadPdf(capturedPdf, `municipal-juazeiro-${cnpjLimpo}`);
+          return {
+            status: 'REGULAR',
+            validade: null,
+            mensagem: 'Certidão Negativa de Débitos (Juazeiro-BA) emitida com sucesso.',
+            urlArquivo,
+          };
+        }
+
+        const textoFinal = (await paginaResultado.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Municipal Juazeiro-BA: contribuinte encontrado, mas não foi possível confirmar a emissão automaticamente (fluxo não validado ao vivo) — verifique manualmente em ${FORM_URL}. Texto: ${textoFinal.slice(0, 500)}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Juazeiro-BA erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Juazeiro-BA: ${err}` };
       } finally {
         await page.context().close();
       }
