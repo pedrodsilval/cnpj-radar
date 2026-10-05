@@ -1130,6 +1130,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalSaatri(cnpjLimpo, 'https://diasdavila.saatri.com.br', "Dias d'Ávila-BA");
     }
 
+    if (munUpper.includes('ARATUIPE') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalAratuipe(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1857,6 +1861,101 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal ${nomeCidade} erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal ${nomeCidade}: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Aratuípe-BA (sistema Smart4Sistemas, app ZK/Java)
+  // Portal: https://server10.smart4sistemas.com:8448/NFSe/ValidacaoExterna/certidaoNegativa.zul
+  // Sem login. Tem captcha de imagem numérico simples (4 dígitos, confirmado
+  // visualmente em 03/10/2026 -- resolvido pelo mesmo pipeline ONNX/2captcha
+  // já usado pros outros tipos, via resolver2captchaImagem()).
+  //
+  // Achado real (03/10/2026): os IDs dos elementos são gerados por sessão
+  // (framework ZK) -- mudam a cada carga de página, diferente do ASP.NET do
+  // SAATRI/São Paulo. Localiza tudo por role/texto acessível, nunca por id.
+  //
+  // Confirmado ao vivo com um CNPJ real não cadastrado no município: duas
+  // mensagens distintas, testadas com um captcha de propósito errado pra
+  // isolar uma da outra --
+  // - "Código de verficação inválido." (sic, erro de digitação do próprio
+  //   site) -- captcha errado, dá pra tentar de novo com uma imagem nova.
+  // - "Contribuinte não encontrado." -- captcha aceito, CNPJ sem cadastro.
+  // Caminho de sucesso (empresa regular) ainda não confirmado contra um
+  // caso real -- mesma cautela já usada nos outros municípios desta sessão.
+  //
+  // RISCO REAL NÃO RESOLVIDO (03/10/2026): o código de verificação parece
+  // expirar rápido -- numa tentativa manual levando ~10-15s entre capturar a
+  // imagem e submeter a resposta, deu "código inválido"; outra, em ~3-4s,
+  // funcionou (captcha aceito, resposta "Contribuinte não encontrado"). O
+  // ONNX local nunca resolve esse captcha (4 dígitos, modelo treinado pra 6
+  // caracteres -- confiança sempre 0, cai pro 2captcha pago), e o 2captcha
+  // tipicamente demora bem mais que essa janela pra responder (polling de
+  // 5 em 5s). Risco real: o loop de retentativa abaixo pode nunca ter
+  // sucesso na prática, mesmo pegando uma imagem nova a cada tentativa. Não
+  // testado ao vivo contra o 2captcha de verdade (só captcha lido à mão) --
+  // se confirmar esse padrão em produção, a solução provável é um solver
+  // local dedicado só pra esse formato (4 dígitos numéricos é bem mais
+  // simples que o CNDT/TST) em vez de depender do 2captcha.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalAratuipe(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const BASE_URL = 'https://server10.smart4sistemas.com:8448/NFSe/ValidacaoExterna/certidaoNegativa.zul';
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Aratuípe-BA: chave do 2captcha não cadastrada. Emita manualmente em ${BASE_URL}.` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.getByRole('radio', { name: 'Empresa' }).click();
+        await page.getByRole('textbox').first().fill(cnpjLimpo);
+
+        const MAX_TENTATIVAS_CAPTCHA = 3;
+        for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CAPTCHA; tentativa++) {
+          const imgCaptcha = page.locator('img[src*="captcha" i]').first();
+          const buffer = await imgCaptcha.screenshot({ timeout: 10_000 });
+          const { token: resposta, erro } = await this.resolver2captchaImagem(`data:image/png;base64,${buffer.toString('base64')}`, apiKey);
+          if (!resposta) {
+            this.logger.warn(`Certidão Municipal Aratuípe-BA tentativa ${tentativa}: captcha não resolvido (${erro}).`);
+            continue;
+          }
+
+          const campoCodigo = page.getByRole('textbox', { name: /código de verificação/i });
+          await campoCodigo.fill('');
+          await campoCodigo.fill(resposta);
+          await page.getByRole('link', { name: 'Emitir Certidão' }).click();
+          await page.waitForTimeout(2_000);
+
+          const texto = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+
+          if (/código de verfica[cç][aã]o inv[aá]lido/i.test(texto)) {
+            continue; // captcha errado -- o site já troca a imagem sozinho, tenta de novo
+          }
+
+          if (/contribuinte n[aã]o encontrado/i.test(texto)) {
+            return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Aratuípe-BA: CNPJ não encontrado no cadastro do município.` };
+          }
+
+          // Resposta diferente das duas conhecidas -- provavelmente o
+          // caminho de sucesso (ou uma pendência), nunca confirmado contra
+          // um caso real. Não arrisca classificar como REGULAR/IRREGULAR
+          // por suposição.
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Certidão Municipal Aratuípe-BA: resposta do portal ainda não validada — verifique manualmente em ${BASE_URL}. Texto: ${texto.slice(0, 500)}`,
+          };
+        }
+
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Aratuípe-BA: não resolveu o código de verificação após ${MAX_TENTATIVAS_CAPTCHA} tentativas.` };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Aratuípe-BA erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Aratuípe-BA: ${err}` };
       } finally {
         await page.context().close();
       }
