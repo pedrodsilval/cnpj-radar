@@ -1142,6 +1142,14 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalJuazeiro(cnpjLimpo);
     }
 
+    // Brasília-DF: não é certidão "municipal" de verdade (o DF não tem
+    // municípios, é unificado) -- mas entra aqui porque é tratada como item
+    // da lista de "municípios pendentes" desta leva de automação, e o
+    // formato de retorno (ResultadoScraper) é o mesmo.
+    if (ufUpper === 'DF') {
+      return this.consultarCertidaoDistritalBrasilia(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1553,6 +1561,57 @@ export class CertidoesScraperService {
       return { token: null, erro: 'timeout: sem resposta do 2captcha em 120s' };
     } catch (err) {
       this.logger.warn(`2captcha reCAPTCHA erro de rede: ${err}`);
+      return { token: null, erro: `erro de rede: ${err}` };
+    }
+  }
+
+  // Cloudflare Turnstile — usado pelo Portal da Receita-DF (achado
+  // 04/10/2026). Diferente de reCAPTCHA/hCaptcha, não existe solver local
+  // (api_captcha não cobre Turnstile) nem fallback grátis -- sempre paga.
+  // Mesma estrutura de submit/poll do 2captcha que os outros métodos, só
+  // troca "method" e o parâmetro de sitekey.
+  private async resolver2captchaTurnstile(
+    apiKey: string,
+    sitekey: string,
+    pageUrl: string,
+  ): Promise<{ token: string | null; erro: string | null }> {
+    try {
+      const submitRes = await fetch('https://2captcha.com/in.php', {
+        method: 'POST',
+        body: new URLSearchParams({
+          key: apiKey,
+          method: 'turnstile',
+          sitekey,
+          pageurl: pageUrl,
+          json: '1',
+        }),
+      });
+      const submitJson = (await submitRes.json()) as { status: number; request: string };
+      if (submitJson.status !== 1) {
+        const erro = `submit: ${submitJson.request}`;
+        this.logger.warn(`2captcha Turnstile submit erro: ${JSON.stringify(submitJson)}`);
+        return { token: null, erro };
+      }
+
+      const captchaId = submitJson.request;
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const resRes = await fetch(
+          `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${captchaId}&json=1`,
+        );
+        const resJson = (await resRes.json()) as { status: number; request: string };
+        if (resJson.status === 1) return { token: resJson.request, erro: null };
+        if (resJson.request !== 'CAPCHA_NOT_READY') {
+          const erro = `resultado: ${resJson.request}`;
+          this.logger.warn(`2captcha Turnstile result erro: ${JSON.stringify(resJson)}`);
+          return { token: null, erro };
+        }
+      }
+
+      this.logger.warn('2captcha Turnstile: timeout — sem resposta em 120s.');
+      return { token: null, erro: 'timeout: sem resposta do 2captcha em 120s' };
+    } catch (err) {
+      this.logger.warn(`2captcha Turnstile erro de rede: ${err}`);
       return { token: null, erro: `erro de rede: ${err}` };
     }
   }
@@ -2213,6 +2272,133 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal Juazeiro-BA erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Juazeiro-BA: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Distrital — Brasília-DF (Portal da Receita do DF)
+  // https://ww1.receita.fazenda.df.gov.br/cidadao/certidoes/Certidao
+  // Sem login, CNPJ direto ("Pessoa Jurídica"). Achado real (04/10/2026):
+  // protegido por Cloudflare Turnstile de verdade (sitekey
+  // 0x4AAAAAAAaOvnbOLak1uio1, extraído do bundle JS da página --
+  // retornaChaveConformeAmbiente() no componente Angular app-psv-turnstile)
+  // -- diferente de todo outro captcha deste projeto, não é um puzzle
+  // visual, é fingerprinting/detecção de automação do Cloudflare.
+  //
+  // Por que não basta preencher um campo escondido: o componente Angular
+  // chama window.turnstile.render(elemento, opcoes) em modo "explicit" e só
+  // atualiza seu estado interno (e o payload que a API realmente recebe)
+  // quando opcoes.callback(token) é invocado de dentro do widget de
+  // verdade -- setar um input hidden "cf-turnstile-response" direto não
+  // aciona esse callback. Solução: como o sitekey é ESTÁTICO (hardcoded no
+  // bundle, não depende de sessão/nonce), resolve o Turnstile via 2captcha
+  // ANTES de navegar, e substitui window.turnstile inteiro via
+  // page.addInitScript() -- quando o Angular chamar .render(), o shim
+  // injeta o token já resolvido direto no callback de sucesso, sem depender
+  // do widget real do Cloudflare carregar.
+  //
+  // RISCO REAL NÃO RESOLVIDO: mesmo com token Turnstile válido, o Cloudflare
+  // pode ter uma camada de bot-management adicional no nível do WAF (TLS
+  // fingerprint, comportamento, IP de datacenter) que rejeite a
+  // requisição de qualquer forma -- mesmo padrão já visto bloqueando o FGTS
+  // na Caixa (ver Decisão #5 do CLAUDE.md). NÃO VALIDADO AO VIVO por
+  // decisão consciente (usuário optou por não gastar uma resolução paga de
+  // Turnstile só pra testar, dado que o sucesso nem está garantido) -- nem
+  // o Turnstile nem o fluxo de preenchimento/emissão foram confirmados
+  // contra uma resposta real do portal.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoDistritalBrasilia(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://ww1.receita.fazenda.df.gov.br/cidadao/certidoes/Certidao';
+    const TURNSTILE_SITEKEY = '0x4AAAAAAAaOvnbOLak1uio1';
+
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Distrital Brasília-DF: chave do 2captcha não cadastrada. Emita manualmente em ${FORM_URL}.` };
+    }
+
+    const { token, erro } = await this.resolver2captchaTurnstile(apiKey, TURNSTILE_SITEKEY, FORM_URL);
+    if (!token) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Distrital Brasília-DF: Cloudflare Turnstile não resolvido (${erro}).` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser, true);
+      try {
+        await page.addInitScript((tok: string) => {
+          (window as unknown as { turnstile: unknown }).turnstile = {
+            render: (_el: unknown, opts: { callback?: (t: string) => void }) => {
+              if (opts && typeof opts.callback === 'function') {
+                setTimeout(() => opts.callback!(tok), 50);
+              }
+              return 'fake-widget-id';
+            },
+            reset: () => {},
+            remove: () => {},
+            execute: () => {},
+          };
+        }, token);
+
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.getByText('Emissão de Certidão', { exact: true }).click();
+        await page.getByText('Pessoa Jurídica', { exact: true }).click();
+        await page.waitForTimeout(500);
+
+        const campoCnpj = page.locator('input[type=text]:visible, input:not([type]):visible').first();
+        await campoCnpj.fill(cnpjLimpo);
+
+        let capturedPdf: Buffer | null = null;
+        let downloadBuffer: Buffer | null = null;
+        const context = page.context();
+        const onResponse = (response: import('playwright').Response) => {
+          if (capturedPdf) return;
+          if ((response.headers()['content-type'] ?? '').includes('application/pdf')) {
+            response.body().then((b) => { capturedPdf = b; }).catch(() => {});
+          }
+        };
+        context.on('response', onResponse);
+        context.on('page', (p) => p.on('response', onResponse));
+        page.once('download', (download) => {
+          download.createReadStream().then((stream) => {
+            if (!stream) return;
+            const chunks: Buffer[] = [];
+            stream.on('data', (c) => chunks.push(c));
+            stream.on('end', () => { downloadBuffer = Buffer.concat(chunks); });
+          }).catch(() => {});
+        });
+
+        const [novaPagina] = await Promise.all([
+          context.waitForEvent('page', { timeout: 15_000 }).catch(() => null),
+          page.getByText('Gerar PDF', { exact: true }).click(),
+        ]);
+        const paginaResultado = novaPagina ?? page;
+        await paginaResultado.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+        await page.waitForTimeout(1_500);
+        context.off('response', onResponse);
+
+        const pdfBuffer = capturedPdf ?? downloadBuffer;
+        if (pdfBuffer) {
+          const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `distrital-brasilia-${cnpjLimpo}`);
+          return {
+            status: 'REGULAR',
+            validade: null,
+            mensagem: 'Certidão de Débitos Distrital (Receita-DF) emitida com sucesso.',
+            urlArquivo,
+          };
+        }
+
+        const textoFinal = (await paginaResultado.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Distrital Brasília-DF: não foi possível confirmar a emissão automaticamente (fluxo não validado ao vivo) — verifique manualmente em ${FORM_URL}. Texto: ${textoFinal.slice(0, 500)}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Distrital Brasília-DF erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Distrital Brasília-DF: ${err}` };
       } finally {
         await page.context().close();
       }
