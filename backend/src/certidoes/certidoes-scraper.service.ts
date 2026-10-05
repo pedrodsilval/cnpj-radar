@@ -1154,6 +1154,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalManaus(cnpjLimpo);
     }
 
+    if (munUpper.includes('SAO VICENTE') && ufUpper === 'SP') {
+      return this.consultarCertidaoMunicipalSaoVicente(cnpjLimpo, cga);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2548,6 +2552,115 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal Manaus-AM erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Manaus-AM: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — São Vicente-SP (Portal do Contribuinte / Webpublico)
+  // https://contribuinte.saovicente.sp.gov.br/certidao-negativa/
+  // App JSF/PrimeFaces (Webpublico) -- SEM captcha. Confirmado ao vivo
+  // (05/10/2026) inspecionando a resposta AJAX (partial-response) do
+  // próprio formulário: o CNPJ sozinho NÃO basta -- o portal também exige
+  // o "Código do Cadastro Econômico" (CMC, cadastro mobiliário interno da
+  // prefeitura -- não é a Inscrição Municipal e não é derivável do CNPJ) e
+  // os dados de quem está SOLICITANDO a certidão (Nome do Requerente +
+  // CPF/CNPJ do Requerente -- não é a empresa pesquisada). Os três, junto
+  // com o CNPJ, aparecem como "Campo Obrigatório!" na validação do próprio
+  // servidor quando omitidos.
+  //
+  // Não existe lookup público de CNPJ → CMC nesse portal (nem a página de
+  // emissão de DAM/mobiliário, que tem a mesma exigência, oferece busca por
+  // CNPJ) -- mesmo problema estrutural do Camaçari-BA com o CGA: precisa do
+  // código por empresa, não dá pra automatizar por CNPJ sozinho. Por isso o
+  // parâmetro `cga` (reaproveitado aqui como CMC, mesmo papel de "código
+  // auxiliar externo por empresa" que já tem na assinatura de
+  // consultarCertidaoMunicipal) é OBRIGATÓRIO pra essa cidade -- sem ele,
+  // nem abre o browser.
+  //
+  // Requerente vem de env vars -- decisão consciente do usuário
+  // (05/10/2026): não fixar nome/CPF-CNPJ do solicitante no código,
+  // manter configurável sem precisar de redeploy.
+  // SAO_VICENTE_REQUERENTE_NOME e SAO_VICENTE_REQUERENTE_DOC.
+  //
+  // NÃO VALIDADO AO VIVO além do mapeamento de campos: não existe CMC
+  // disponível pra nenhum CNPJ de teste (não achamos nenhuma fonte pública
+  // que relacione CNPJ a CMC em São Vicente). Seletores abaixo vêm direto
+  // da resposta AJAX real (Formulario:tipoCadastro, Formulario:tipoSolicitacao,
+  // Formulario:paraconulsta, Formulario:cmc, Formulario:requerente,
+  // Formulario:docrequerente) -- exceto o botão "Consultar", localizado
+  // por texto porque seu id (Formulario:j_idt178) é gerado automaticamente
+  // pelo JSF e pode mudar a cada deploy do portal.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalSaoVicente(cnpjLimpo: string, cmc?: string | null): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://contribuinte.saovicente.sp.gov.br/certidao-negativa/';
+
+    if (!cmc) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: `Certidão Municipal São Vicente-SP: o portal exige o Código do Cadastro Econômico (CMC) da empresa, que não é derivável do CNPJ. Emita manualmente em ${FORM_URL}.`,
+      };
+    }
+
+    const requerenteNome = process.env.SAO_VICENTE_REQUERENTE_NOME;
+    const requerenteDoc = process.env.SAO_VICENTE_REQUERENTE_DOC?.replace(/\D/g, '');
+    if (!requerenteNome || !requerenteDoc) {
+      return {
+        status: 'INDISPONIVEL',
+        validade: null,
+        mensagem: 'Certidão Municipal São Vicente-SP: configure SAO_VICENTE_REQUERENTE_NOME e SAO_VICENTE_REQUERENTE_DOC no ambiente (nome e CPF/CNPJ de quem solicita a certidão).',
+      };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.locator('[id="Formulario:tipoCadastro"]').selectOption('ECONOMICO');
+        await page.waitForTimeout(1_500);
+        await page.locator('[id="Formulario:tipoSolicitacao"]').selectOption('Certidão de Débitos');
+        await page.waitForTimeout(1_500);
+
+        await page.locator('[id="Formulario:paraconulsta"]').fill(cnpjLimpo);
+        await page.locator('[id="Formulario:cmc"]').fill(cmc);
+        await page.locator('[id="Formulario:requerente"]').fill(requerenteNome);
+        await page.locator('[id="Formulario:docrequerente"]').fill(requerenteDoc);
+
+        const context = page.context();
+        let pdfBuffer: Buffer | null = null;
+        const onResponse = (response: import('playwright').Response) => {
+          if (pdfBuffer) return;
+          if ((response.headers()['content-type'] ?? '').includes('application/pdf')) {
+            response.body().then((b) => { pdfBuffer = b; }).catch(() => {});
+          }
+        };
+        context.on('response', onResponse);
+        context.on('page', (p) => p.on('response', onResponse));
+
+        await page.locator('a:has-text("Consultar")').click();
+        await page.waitForTimeout(3_000);
+        context.off('response', onResponse);
+
+        if (pdfBuffer) {
+          const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-sao-vicente-${cnpjLimpo}`);
+          return { status: 'REGULAR', validade: null, mensagem: 'Certidão Negativa de Débitos Municipal (São Vicente-SP) emitida com sucesso.', urlArquivo };
+        }
+
+        const textoMensagem = (await page.locator('.ui-messages-error, .ui-messages-info').first().innerText({ timeout: 5_000 }).catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: textoMensagem
+            ? `Certidão Municipal São Vicente-SP: ${textoMensagem}`
+            : `Certidão Municipal São Vicente-SP: não foi possível confirmar a emissão automaticamente — verifique manualmente em ${FORM_URL}.`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal São Vicente-SP erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal São Vicente-SP: ${err}` };
       } finally {
         await page.context().close();
       }
