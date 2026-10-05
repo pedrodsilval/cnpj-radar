@@ -1166,6 +1166,10 @@ export class CertidoesScraperService {
       return this.consultarDebitosSaoSebastiaoDoCai(cnpjLimpo, cga);
     }
 
+    if (munUpper.includes('NOVA FATIMA') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalNovaFatima(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2887,6 +2891,76 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Consulta de débitos São Sebastião do Caí-RS erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `${LOGIN_INFO} Erro ao tentar a consulta de débitos informal: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Nova Fátima-BA (Portal e-Contrib / Keep Informática)
+  // http://www.e-contrib.com.br/portal-contribuinte/novafatima/mobiliario/emissao-cnd
+  // De longe o portal mais simples encontrado nesta leva de automação: SPA
+  // moderna (React), sem captcha, sem login, sem código auxiliar -- só pede
+  // CPF ou CNPJ (o próprio portal anuncia suporte ao formato alfanumérico
+  // novo). Campo real: <input name="documento">; botão: <button
+  // type="submit"> com texto "Emitir CND".
+  //
+  // VALIDADO AO VIVO (05/10/2026) com CNPJ real (06.241.362/0002-31,
+  // Clínica Vida): caminho IRREGULAR confirmado -- resposta real foi
+  // "Não é possível emitir a Certidão Negativa de Débitos (CND), pois o
+  // contribuinte possui débitos vencidos em aberto vinculados ao seu
+  // CPF/CNPJ", renderizada num <p role="alert"> (seletor estável).
+  // O caminho REGULAR (sem pendência) NÃO foi validado -- não achamos um
+  // segundo CNPJ de teste sem débito; o portal descreve que "o documento
+  // aparece logo abaixo do formulário" nesse caso, então a captura usa o
+  // mesmo padrão genérico de sniff de resposta PDF (content-type
+  // application/pdf) já usado nos outros scrapers deste arquivo.
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalNovaFatima(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const FORM_URL = 'http://www.e-contrib.com.br/portal-contribuinte/novafatima/mobiliario/emissao-cnd';
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.locator('input[name="documento"]').fill(cnpjLimpo);
+
+        const context = page.context();
+        let pdfBuffer: Buffer | null = null;
+        const onResponse = (response: import('playwright').Response) => {
+          if (pdfBuffer) return;
+          if ((response.headers()['content-type'] ?? '').includes('application/pdf')) {
+            response.body().then((b) => { pdfBuffer = b; }).catch(() => {});
+          }
+        };
+        context.on('response', onResponse);
+        context.on('page', (p) => p.on('response', onResponse));
+
+        await page.getByRole('button', { name: 'Emitir CND' }).click();
+        await page.waitForTimeout(4_000);
+        context.off('response', onResponse);
+
+        if (pdfBuffer) {
+          const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-nova-fatima-${cnpjLimpo}`);
+          return { status: 'REGULAR', validade: null, mensagem: 'Certidão Negativa de Débitos Municipal (Nova Fátima-BA) emitida com sucesso.', urlArquivo };
+        }
+
+        const mensagemErro = await page.locator('[role="alert"]').first().innerText({ timeout: 5_000 }).catch(() => null);
+        if (mensagemErro && /d[eé]bitos?/i.test(mensagemErro)) {
+          return { status: 'IRREGULAR', validade: null, mensagem: `Certidão Municipal Nova Fátima-BA: ${mensagemErro.trim()}` };
+        }
+
+        const textoFinal = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+        return {
+          status: 'INDISPONIVEL',
+          validade: null,
+          mensagem: `Certidão Municipal Nova Fátima-BA: não foi possível confirmar a emissão automaticamente — verifique manualmente em ${FORM_URL}. Texto: ${textoFinal.slice(0, 500)}`,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Nova Fátima-BA erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Nova Fátima-BA: ${err}` };
       } finally {
         await page.context().close();
       }
