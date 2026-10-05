@@ -1150,6 +1150,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoDistritalBrasilia(cnpjLimpo);
     }
 
+    if (munUpper.includes('MANAUS') && ufUpper === 'AM') {
+      return this.consultarCertidaoMunicipalManaus(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -2399,6 +2403,151 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Distrital Brasília-DF erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Distrital Brasília-DF: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Manaus-AM (SEMEF / Manaus Atende)
+  // Formulário real (achado 05/10/2026, por trás de iframe do portal
+  // manausatende.manaus.am.gov.br): https://stm.manaus.am.gov.br/stm/servlet/hwtportalcontribuinte_emb?certidao-imobiliaria
+  // App GeneXus (campos vNNNN, postback via botão JS, não é um <form> comum)
+  // -- IDs são estáveis (não há o problema de ID dinâmico visto em
+  // Aratuípe/ZK). Captcha é imagem de palavra simples (ex.: "sugar"),
+  // resolvido como os demais via resolver2captchaImagem (base64 da própria
+  // imagem, já que o <img> aponta pra uma URL de verdade, não um data URI).
+  //
+  // VALIDADO AO VIVO (05/10/2026) com três CNPJs reais, cobrindo os três
+  // caminhos de resposta do portal:
+  // 1) 14.200.166/0001-66 (Elgin Industrial da Amazônia): "restrição que
+  //    precisa de análise" -- o portal recusa emitir automaticamente e
+  //    direciona pro processo eletrônico de "Certidão Positiva com efeito
+  //    de Negativa" (outro serviço, com análise manual).
+  // 2) 04.337.168/0001-48 (Moto Honda da Amazônia, matriz Manaus/AM):
+  //    "Localizado mais de um cadastro ativo para o CPF/CNPJ informado.
+  //    Favor emita sua certidão pela Matrícula IPTU ou Inscrição Municipal"
+  //    -- empresa grande com múltiplas inscrições municipais sob o mesmo
+  //    CNPJ, que o lookup por CNPJ não resolve sozinho.
+  // 3) 45.030.413/0001-57 (CNPJ pego de um PDF de habilitação já publicado
+  //    no portal de compras de Manaus, ou seja, empresa que já teve CND
+  //    emitida por esse mesmo sistema antes): CAMINHO REGULAR -- sem
+  //    mensagem de erro, o botão abre uma janela nova
+  //    (window.open('hwvdocumentos_v3')) que serve o PDF da certidão
+  //    diretamente. Confirma o fluxo de sucesso.
+  // Esse terceiro teste também pegou um bug real: o campo visível "Insira o
+  // Número" tem id #vNUMERO, mas fica sempre vazio -- o valor digitado é
+  // replicado por JS pro campo #vNRFILTRO, que é o único realmente
+  // enviado. A primeira versão deste scraper (nunca rodada contra o portal
+  // de verdade) preenchia #vNUMERO e teria mandado toda consulta vazia;
+  // corrigido pra #vNRFILTRO após inspecionar o DOM ao vivo.
+  // Com os três caminhos cobertos, a captura de PDF do caso 3 não foi
+  // validada ponta a ponta pelo SCRAPER (só observada manualmente no
+  // navegador, onde o popup foi bloqueado pela própria ferramenta de
+  // exploração) -- o código abaixo assume que o Playwright real, operando
+  // com cliques via CDP, não sofre esse bloqueio de popup (diferente de um
+  // bloqueador de pop-up de usuário real, que só dispara pra window.open()
+  // sem gesto confiável).
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalManaus(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const FORM_URL = 'https://stm.manaus.am.gov.br/stm/servlet/hwtportalcontribuinte_emb?certidao-imobiliaria';
+
+    const apiKey = await this.credenciais.obterValor(CredencialTipo.API_2CAPTCHA);
+    if (!apiKey) {
+      return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Manaus-AM: chave do 2captcha não cadastrada. Emita manualmente em ${FORM_URL}.` };
+    }
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+        await page.locator('#vTIPOFILTRO3').click();
+        // O campo visível "Insira o Número" tem id #vNUMERO, mas esse campo
+        // fica sempre vazio -- confirmado inspecionando o DOM ao vivo: o
+        // valor digitado é replicado por JS pro campo real #vNRFILTRO, que é
+        // o único efetivamente enviado no postback. Preencher só #vNUMERO
+        // (erro cometido na primeira versão deste scraper, nunca chegou a
+        // rodar contra o portal de verdade) faria toda consulta vir vazia.
+        await page.locator('#vNRFILTRO').fill(cnpjLimpo);
+
+        const MAX_TENTATIVAS_CAPTCHA = 3;
+        let mensagemFinal: string | null = null;
+        let pdfBuffer: Buffer | null = null;
+        const context = page.context();
+
+        for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CAPTCHA; tentativa++) {
+          const imgCaptcha = page.locator('img[src*="Captcha" i]').first();
+          const buffer = await imgCaptcha.screenshot({ timeout: 10_000 });
+          const { token: resposta, erro } = await this.resolver2captchaImagem(`data:image/png;base64,${buffer.toString('base64')}`, apiKey);
+          if (!resposta) {
+            this.logger.warn(`Certidão Municipal Manaus-AM tentativa ${tentativa}: captcha não resolvido (${erro}).`);
+            continue;
+          }
+
+          await page.locator('#_cfield').fill('');
+          await page.locator('#_cfield').fill(resposta);
+
+          let respostaPdf: Buffer | null = null;
+          const onResponse = (response: import('playwright').Response) => {
+            if (respostaPdf) return;
+            if ((response.headers()['content-type'] ?? '').includes('application/pdf')) {
+              response.body().then((b) => { respostaPdf = b; }).catch(() => {});
+            }
+          };
+          context.on('response', onResponse);
+
+          // Caso sem pendência (validado ao vivo 05/10/2026, CNPJ
+          // 45.030.413/0001-57): o botão NÃO navega a página atual, abre uma
+          // janela nova (window.open('hwvdocumentos_v3')) que serve o PDF da
+          // CND diretamente -- por isso a corrida explícita por um novo
+          // 'page' no context, igual ao padrão já usado em Brasília/Santo
+          // Amaro, em vez de só confiar no listener passivo de 'response'.
+          const [popup] = await Promise.all([
+            context.waitForEvent('page', { timeout: 8_000 }).catch(() => null),
+            page.locator('input[name="BTNCONSULTAR"]').click(),
+          ]);
+          if (popup) {
+            popup.on('response', onResponse);
+            await popup.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+          }
+          await page.waitForTimeout(2_000);
+          context.off('response', onResponse);
+
+          if (respostaPdf) {
+            pdfBuffer = respostaPdf;
+            break;
+          }
+
+          const textoMensagem = (await page.locator('#MENSAGEM').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+          if (/codigo (de verificacao|captcha).{0,20}(invalid|incorret)/i.test(textoMensagem.normalize('NFD').replace(/[̀-ͯ]/g, ''))) {
+            this.logger.warn(`Certidão Municipal Manaus-AM tentativa ${tentativa}: captcha incorreto, tentando de novo.`);
+            await page.locator('a:has-text("Recarregar")').click().catch(() => {});
+            continue;
+          }
+
+          mensagemFinal = textoMensagem || null;
+          break;
+        }
+
+        if (pdfBuffer) {
+          const urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-manaus-${cnpjLimpo}`);
+          return { status: 'REGULAR', validade: null, mensagem: 'Certidão Negativa de Débitos Municipal (Manaus-AM) emitida com sucesso.', urlArquivo };
+        }
+
+        if (mensagemFinal) {
+          return {
+            status: 'INDISPONIVEL',
+            validade: null,
+            mensagem: `Certidão Municipal Manaus-AM: o portal não emitiu automaticamente — "${mensagemFinal}"`,
+          };
+        }
+
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Manaus-AM: captcha não resolvido após ${MAX_TENTATIVAS_CAPTCHA} tentativas.` };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Manaus-AM erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Manaus-AM: ${err}` };
       } finally {
         await page.context().close();
       }
