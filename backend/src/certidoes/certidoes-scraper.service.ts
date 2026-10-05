@@ -1134,6 +1134,10 @@ export class CertidoesScraperService {
       return this.consultarCertidaoMunicipalAratuipe(cnpjLimpo);
     }
 
+    if (munUpper.includes('SANTO AMARO') && ufUpper === 'BA') {
+      return this.consultarCertidaoMunicipalSantoAmaro(cnpjLimpo);
+    }
+
     // Mapa de portais municipais conhecidos por UF (prefeituras com CND online pública)
     const portaisMunicipais: Record<string, string> = {
       SP: 'https://www.prefeitura.sp.gov.br/cidade/secretarias/financas/servicos/',
@@ -1956,6 +1960,118 @@ export class CertidoesScraperService {
       } catch (err) {
         this.logger.warn(`Certidão Municipal Aratuípe-BA erro: ${err}`);
         return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Aratuípe-BA: ${err}` };
+      } finally {
+        await page.context().close();
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Certidão Municipal — Santo Amaro-BA (sistema "Município Online", 3Tecnos
+  // Tecnologia — ASP.NET WebForms por baixo de uma camada AngularJS, IDs
+  // estáveis tipo ctl00$body$... — diferente do ZK de Aratuípe, não muda por
+  // sessão). Sem login, sem captcha. Portal:
+  // https://www.municipioonline.com.br/ba/prefeitura/santoamaro/contribuinte/certidao/emissao
+  //
+  // Achado real (03/10/2026): a tela tem 3 opções de "Tipo Certidão" --
+  // Contribuinte / Imóvel / Econômico. O relatório de outro agente desta
+  // sessão testou só "Econômico" (exige Inscrição Municipal previamente
+  // cadastrada) e concluiu que não dava pra emitir só com CNPJ -- errado:
+  // "Contribuinte" (radio value "1") aceita CPF/CNPJ direto, sem exigir
+  // nenhum cadastro prévio.
+  //
+  // PRIMEIRO caso de sucesso real confirmado nesta sessão inteira (as outras
+  // cidades só deram "não encontrado"/"impedimento"): CNPJ real de empresa
+  // cadastrada em Santo Amaro devolveu "Foi criada uma nova certidão.",
+  // Tipo Certidão "1- Negativa" (= REGULAR), Validade extraída do campo
+  // correspondente. O backend é devagar -- a consulta real levou ~20s pra
+  // responder (e ~50s no caso "não encontrado", testado em separado) --
+  // timeouts generosos abaixo de propósito, não é sinal de travamento.
+  //
+  // PDF: o botão "Imprimir" (#btnVisualizar) abre um relatório em
+  // .../relatorio/view?a=<ano>&i=<id>&r=relCertidao&sgUF=ba -- "ano" e "id"
+  // vêm do campo "Código/Exercício" exibido na tela de sucesso (formato
+  // "<id>/<ano>", ex. "772/2026"). Constrói a URL direto em vez de clicar no
+  // botão, abre numa página Playwright separada e usa .pdf() (mesmo padrão
+  // já usado em emitirCertidaoMunicipalSalvador).
+  // ---------------------------------------------------------------------------
+  private async consultarCertidaoMunicipalSantoAmaro(cnpjLimpo: string): Promise<ResultadoScraper> {
+    const BASE_URL = 'https://www.municipioonline.com.br/ba/prefeitura/santoamaro/contribuinte/certidao/emissao';
+
+    return this.comBrowser(async (browser) => {
+      const page = await this.novaPage(browser);
+      try {
+        await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+        await page.locator('input[name="optradioCertidao"][value="1"]').click(); // Contribuinte
+        await page.locator('#body_txtCpfCnpj').fill(cnpjLimpo);
+        await page.locator('#btnConsCertidao').click();
+
+        // Backend lento (confirmado ~20-50s ao vivo) -- espera a mensagem de
+        // "não encontrado" ou o campo de Código/Exercício da certidão criada,
+        // o que vier primeiro, com timeout generoso.
+        const seletorSucesso = '#body_txtCodigo, [id*="txtCodigo" i]';
+        const resultado = await Promise.race([
+          page.getByText(/não pertence a nenhum contribuinte/i).waitFor({ timeout: 90_000 }).then(() => 'nao_encontrado' as const),
+          page.locator(seletorSucesso).first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => 'sucesso' as const),
+        ]).catch(() => null);
+
+        if (resultado === 'nao_encontrado') {
+          return { status: 'INDISPONIVEL', validade: null, mensagem: 'Certidão Municipal Santo Amaro-BA: CNPJ não encontrado no cadastro do município.' };
+        }
+
+        if (resultado !== 'sucesso') {
+          const texto = (await page.innerText('body').catch(() => '')).replace(/\s+/g, ' ').trim();
+          return { status: 'INDISPONIVEL', validade: null, mensagem: `Certidão Municipal Santo Amaro-BA: sem resposta clara do portal (timeout). Texto: ${texto.slice(0, 500)}` };
+        }
+
+        const tipoCertidao = (await page.locator('#body_txtTipoCertidao').inputValue().catch(() => '')).trim();
+        const codigoExercicio = (await page.locator('#body_txtCodigo').inputValue().catch(() => '')).trim();
+        const validadeTexto = (await page.locator('#body_txtValidade').inputValue().catch(() => '')).trim();
+        const validade = this.extrairData(validadeTexto);
+
+        // "1- Negativa" = sem débitos. Qualquer outro valor (ex. "Positiva")
+        // é tratado com cautela -- não vimos um caso real de pendência pra
+        // confirmar o texto exato, então não assume IRREGULAR por suposição.
+        if (!/negativa/i.test(tipoCertidao)) {
+          return {
+            status: 'INDISPONIVEL',
+            validade,
+            mensagem: `Certidão Municipal Santo Amaro-BA: tipo de certidão retornado ("${tipoCertidao}") não confirmado como regular — verifique manualmente. Código/Exercício: ${codigoExercicio}.`,
+          };
+        }
+
+        // Achado real (03/10/2026): navegar direto pra URL do relatório numa
+        // aba nova (goto cru) trava em about:blank, mesmo dentro do mesmo
+        // contexto/cookies -- o botão #btnVisualizar provavelmente depende
+        // de algum estado da página (hidden field, postback) que um GET
+        // isolado não reproduz. Clica no botão de verdade e tenta capturar a
+        // aba que ele abrir (mesmo padrão do Salvador); se não abrir nenhuma
+        // (não confirmado se abre mesmo), cai no catch e segue sem anexo --
+        // o status REGULAR já está confirmado pelo campo Tipo Certidão
+        // acima, então a falta de PDF não derruba o resultado.
+        let urlArquivo: string | null = null;
+        try {
+          const [pdfPage] = await Promise.all([
+            page.context().waitForEvent('page', { timeout: 15_000 }),
+            page.locator('#btnVisualizar').click(),
+          ]);
+          await pdfPage.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => {});
+          const pdfBuffer = await pdfPage.pdf({ format: 'A4', printBackground: true });
+          urlArquivo = await this.storage.uploadPdf(pdfBuffer, `municipal-santoamaro-${cnpjLimpo}`);
+          await pdfPage.close();
+        } catch (err) {
+          this.logger.warn(`Certidão Municipal Santo Amaro-BA: falha ao gerar PDF (${err}) -- resultado REGULAR mantido sem anexo. Código/Exercício: ${codigoExercicio}.`);
+        }
+
+        return {
+          status: 'REGULAR',
+          validade,
+          mensagem: `Certidão Negativa de Débitos (Santo Amaro-BA) emitida com sucesso. Código/Exercício: ${codigoExercicio}.`,
+          urlArquivo,
+        };
+      } catch (err) {
+        this.logger.warn(`Certidão Municipal Santo Amaro-BA erro: ${err}`);
+        return { status: 'INDISPONIVEL', validade: null, mensagem: `Erro ao consultar Certidão Municipal Santo Amaro-BA: ${err}` };
       } finally {
         await page.context().close();
       }
