@@ -534,6 +534,7 @@ function App() {
   const [modalSenha, setModalSenha]   = useState(false)
   const [vista, setVista]             = useState<Vista>('cnpj')
   const [cnpj, setCnpj]               = useState('')
+  const [empresasCadastradas, setEmpresasCadastradas] = useState<{ cnpj: string; razaoSocial: string }[]>([])
   const [consulta, setConsulta]       = useState<ConsultaState>(CONSULTA_IDLE)
   const [activeTab, setActiveTab]     = useState<Tab>('cadastro')
   const [lead, setLead]               = useState<LeadState>(LEAD_IDLE)
@@ -569,6 +570,17 @@ function App() {
       consultarCnpj(ultimo)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logado])
+
+  // Lista de empresas já cadastradas (aba Clientes) pro seletor da Consulta
+  // CNPJ — evita ter que digitar/colar o CNPJ de um cliente que já está no
+  // Radar.
+  useEffect(() => {
+    if (!logado) return
+    apiFetch('/empresas')
+      .then(res => res.ok ? res.json() : [])
+      .then((lista: { cnpj: string; razaoSocial: string }[]) => setEmpresasCadastradas(lista))
+      .catch(() => {})
   }, [logado])
 
   if (!logado) {
@@ -842,6 +854,29 @@ function App() {
                 {consulta.carregando ? 'Consultando…' : 'Consultar CNPJ'}
               </button>
             </form>
+
+            {empresasCadastradas.length > 0 && (
+              <div className="mt-3">
+                <label htmlFor="cnpj-select" className="sr-only">Ou selecione uma empresa já cadastrada</label>
+                <select
+                  id="cnpj-select"
+                  value=""
+                  disabled={ocupado}
+                  onChange={(e) => {
+                    const selecionado = e.target.value
+                    if (!selecionado) return
+                    setCnpj(selecionado)
+                    consultarCnpj(selecionado)
+                  }}
+                  className="w-full border border-gray-200 rounded-2xl px-5 py-2.5 font-body text-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-gray-50"
+                >
+                  <option value="">Ou selecione uma empresa já cadastrada…</option>
+                  {empresasCadastradas.map(e => (
+                    <option key={e.cnpj} value={e.cnpj}>{e.razaoSocial} — {formatarCnpj(e.cnpj)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {consulta.erro && (
               <p

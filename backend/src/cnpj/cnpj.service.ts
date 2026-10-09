@@ -36,12 +36,118 @@ const ERROS_COM_FALLBACK = new Set<CnpjErrorCode>([
 interface FonteExterna {
   nome: string;
   buildUrl: (cnpj: string) => string;
+  // Algumas fontes (ex. ReceitaWS) devolvem erro com HTTP 200 — checado antes
+  // de tentar normalizar o corpo como sucesso.
+  checarErroNoCorpo?: (dados: Record<string, unknown>) => CnpjErrorCode | null;
+  // Converte o formato bruto da fonte pro "dialeto" de campos que
+  // normalizarCnpj() já entende (convenção da BrasilAPI/RFB) — evita
+  // duplicar toda a lógica de normalização por fonte nova. A própria
+  // BrasilAPI não precisa disso (já fala esse dialeto).
+  adaptar?: (bruto: Record<string, unknown>, cnpjSanitizado: string) => Record<string, unknown>;
+}
+
+// RFB codifica a situação cadastral como número; a ReceitaWS só devolve o
+// texto. Mapeia os códigos oficiais mais comuns — o que não bater fica null
+// (CAMPOS_OBRIGATORIOS só exige a CHAVE presente, não o valor, então isso
+// não derruba a consulta, só deixa o código numérico vazio).
+const CODIGOS_SITUACAO_CADASTRAL: Record<string, number> = {
+  NULA: 1, ATIVA: 2, SUSPENSA: 3, INAPTA: 4, BAIXADA: 8,
+};
+
+// ReceitaWS usa datas DD/MM/AAAA — new Date() do JS não é confiável pra esse
+// formato (trata como MM/DD em muitos casos), teria que converter na mão.
+function dataBrParaIso(valor: unknown): string | null {
+  if (typeof valor !== 'string') return null;
+  const m = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+// cnae_principal_codigo na nossa tabela é varchar(7) -- convenção da
+// BrasilAPI de código numérico puro (ex. "5611201"). A ReceitaWS devolve
+// pontuado (ex. "56.11-2-01", 10 caracteres) -- estourava a coluna.
+function digitosCnae(valor: unknown): string | null {
+  if (typeof valor !== 'string') return null;
+  const digitos = valor.replace(/\D/g, '');
+  return digitos || null;
+}
+
+// ReceitaWS às vezes empacota vários telefones numa string só, separados
+// por "/" (ex. "(71) 3327-2169 / (71) 8247-5823") -- stripar tudo que não é
+// dígito concatenaria os três e estourava a coluna (varchar(11), um único
+// telefone). Pega só o primeiro.
+function primeiroTelefone(valor: unknown): string | null {
+  if (typeof valor !== 'string') return null;
+  return valor.split('/')[0]?.trim() || null;
+}
+
+function adaptarReceitaWs(bruto: Record<string, unknown>, cnpjSanitizado: string): Record<string, unknown> {
+  const simples = (bruto['simples'] ?? {}) as Record<string, unknown>;
+  const simei = (bruto['simei'] ?? {}) as Record<string, unknown>;
+  const atividadePrincipal = Array.isArray(bruto['atividade_principal'])
+    ? (bruto['atividade_principal'] as Record<string, unknown>[])[0]
+    : null;
+  const atividadesSecundarias = Array.isArray(bruto['atividades_secundarias'])
+    ? (bruto['atividades_secundarias'] as Record<string, unknown>[])
+    : [];
+  const situacaoTexto = String(bruto['situacao'] ?? '').toUpperCase().trim();
+
+  return {
+    cnpj: cnpjSanitizado,
+    razao_social: bruto['nome'],
+    nome_fantasia: bruto['fantasia'],
+    descricao_situacao_cadastral: bruto['situacao'],
+    situacao_cadastral: CODIGOS_SITUACAO_CADASTRAL[situacaoTexto] ?? null,
+    data_situacao_cadastral: dataBrParaIso(bruto['data_situacao']),
+    natureza_juridica: bruto['natureza_juridica'],
+    tipo: bruto['tipo'],
+    porte: bruto['porte'],
+    cnae_fiscal: digitosCnae(atividadePrincipal?.['code']),
+    cnae_fiscal_descricao: atividadePrincipal?.['text'] ?? null,
+    cnaes_secundarios: atividadesSecundarias.map((a) => ({ codigo: digitosCnae(a['code']), descricao: a['text'] })),
+    logradouro: bruto['logradouro'],
+    numero: bruto['numero'],
+    complemento: bruto['complemento'],
+    bairro: bruto['bairro'],
+    municipio: bruto['municipio'],
+    uf: bruto['uf'],
+    cep: bruto['cep'],
+    email: bruto['email'],
+    telefone: primeiroTelefone(bruto['telefone']),
+    capital_social: bruto['capital_social'],
+    opcao_pelo_simples: simples['optante'],
+    data_opcao_pelo_simples: dataBrParaIso(simples['data_opcao']),
+    data_exclusao_do_simples: dataBrParaIso(simples['data_exclusao']),
+    opcao_pelo_mei: simei['optante'],
+    descricao_motivo_situacao_cadastral: bruto['motivo_situacao'],
+    situacao_especial: bruto['situacao_especial'],
+    data_situacao_especial: dataBrParaIso(bruto['data_situacao_especial']),
+    data_inicio_atividade: dataBrParaIso(bruto['abertura']),
+    qsa: bruto['qsa'], // já no formato {nome, qual} que normalizarCnpj aceita via fallback
+  };
 }
 
 const FONTES: FonteExterna[] = [
   {
     nome: 'BrasilAPI (origem: Receita Federal)',
     buildUrl: (cnpj) => `https://brasilapi.com.br/api/cnpj/v1/${cnpj}`,
+  },
+  // Fallback gratuito (sem chave) — usado só quando a BrasilAPI falha.
+  // Limite de 3 requisições/minuto por IP no plano grátis; como só entra em
+  // ação no fallback (não em toda consulta), isso raramente é um problema.
+  // Base própria da ReceitaWS (não bate na Receita Federal ao vivo a cada
+  // consulta), então continua respondendo mesmo quando o webservice oficial
+  // da RFB está fora do ar — foi exatamente esse o caso real que motivou
+  // adicionar esse fallback (03/10/2026).
+  {
+    nome: 'ReceitaWS',
+    buildUrl: (cnpj) => `https://www.receitaws.com.br/v1/cnpj/${cnpj}`,
+    checarErroNoCorpo: (dados) => {
+      if (dados['status'] !== 'ERROR') return null;
+      const msg = String(dados['message'] ?? '').toLowerCase();
+      if (msg.includes('minuto') || msg.includes('frequ')) return 'RATE_LIMIT';
+      return 'CNPJ_NAO_ENCONTRADO';
+    },
+    adaptar: adaptarReceitaWs,
   },
 ];
 
@@ -230,6 +336,13 @@ export class CnpjService {
       } catch {
         return { error: 'RESPOSTA_INCOMPLETA' };
       }
+
+      // Algumas fontes (ex. ReceitaWS) respondem erro com HTTP 200 — checa
+      // antes de tratar o corpo como sucesso.
+      const erroNoCorpo = fonte.checarErroNoCorpo?.(dados) ?? null;
+      if (erroNoCorpo) return { error: erroNoCorpo };
+
+      if (fonte.adaptar) dados = fonte.adaptar(dados, cnpj);
 
       const camposFaltando = CAMPOS_OBRIGATORIOS.filter((c) => !(c in dados));
       if (camposFaltando.length > 0) return { error: 'RESPOSTA_INCOMPLETA' };
