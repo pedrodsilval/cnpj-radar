@@ -585,7 +585,7 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
             </button>
 
             {perguntandoAtualizar && (
-              <div className="absolute right-0 top-full mt-1.5 z-10 bg-white border border-gray-200 rounded-2xl shadow-xl p-2 w-72">
+              <div className="absolute left-0 top-full mt-1.5 z-10 bg-white border border-gray-200 rounded-2xl shadow-xl p-2 w-72">
                 <p className="text-xs text-gray-500 font-body px-2 pt-1 pb-2">
                   O relatório usa as certidões já salvas. Quer atualizar antes de gerar?
                 </p>
