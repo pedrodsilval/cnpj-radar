@@ -382,6 +382,7 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
   const [consultandoAuto, setConsultandoAuto]   = useState(false)
   const [erroAuto, setErroAuto]                 = useState<string | null>(null)
   const [baixandoRelatorio, setBaixandoRelatorio] = useState(false)
+  const [perguntandoAtualizar, setPerguntandoAtualizar] = useState(false)
 
   async function carregar() {
     setCarregando(true)
@@ -512,6 +513,16 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
     }
   }
 
+  // Pergunta antes de gerar: o relatório sempre usa só o que já está salvo
+  // no banco (não consulta nada ao vivo sozinho) — "atualizar primeiro"
+  // roda a mesma consulta automática do botão ao lado antes de gerar, pra
+  // quem quer dados frescos em vez do último status salvo.
+  async function atualizarEGerar() {
+    setPerguntandoAtualizar(false)
+    await consultarAuto()
+    await baixarPreAnalise()
+  }
+
   const regulares   = itens.filter(i => i.status === 'REGULAR').length
   const irregulares = itens.filter(i => i.status === 'IRREGULAR').length
   const vencendo    = itens.filter(i =>
@@ -564,13 +575,41 @@ export function CertidoesTab({ cnpj, onRelatorioGerado }: { cnpj: string, onRela
               ⚠ {erroAuto}
             </span>
           )}
-          <button
-            onClick={baixarPreAnalise}
-            disabled={baixandoRelatorio}
-            className="text-sm font-display font-bold px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-          >
-            {baixandoRelatorio ? 'Gerando…' : 'Relatório de pré-análise'}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setPerguntandoAtualizar(v => !v)}
+              disabled={baixandoRelatorio || consultandoAuto}
+              className="text-sm font-display font-bold px-4 py-2 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {baixandoRelatorio || consultandoAuto ? 'Gerando…' : 'Relatório de pré-análise'}
+            </button>
+
+            {perguntandoAtualizar && (
+              <div className="absolute right-0 top-full mt-1.5 z-10 bg-white border border-gray-200 rounded-2xl shadow-xl p-2 w-72">
+                <p className="text-xs text-gray-500 font-body px-2 pt-1 pb-2">
+                  O relatório usa as certidões já salvas. Quer atualizar antes de gerar?
+                </p>
+                <button
+                  onClick={() => { setPerguntandoAtualizar(false); baixarPreAnalise() }}
+                  className="w-full text-left text-sm font-display font-bold px-3 py-2 rounded-xl hover:bg-gray-50 transition-colors text-depth"
+                >
+                  Usar certidões já salvas
+                </button>
+                <button
+                  onClick={atualizarEGerar}
+                  className="w-full text-left text-sm font-display font-bold px-3 py-2 rounded-xl hover:bg-primary/5 transition-colors text-primary"
+                >
+                  Atualizar certidões primeiro
+                </button>
+                <button
+                  onClick={() => setPerguntandoAtualizar(false)}
+                  className="w-full text-left text-xs font-body px-3 py-1.5 rounded-xl hover:bg-gray-50 transition-colors text-gray-400"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={consultarAuto}
             disabled={consultandoAuto}
