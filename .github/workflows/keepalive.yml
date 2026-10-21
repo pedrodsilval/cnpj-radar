@@ -2,8 +2,9 @@ name: Keepalive
 
 # Pinga o health check do backend para gerar atividade no banco e evitar a pausa
 # automática do Supabase free tier (~7 dias sem queries). O /health executa um
-# SELECT 1, então o ping conta como atividade real. Também acorda o Render (hiberna
-# após ~15 min). 2x/dia com folga contra atrasos do agendador do GitHub Actions.
+# SELECT 1, então o ping conta como atividade real. Aponta direto para o VPS
+# (radar.everestcontabilidade.com), que é onde o radar roda hoje — não depende mais
+# do Render. 2x/dia com folga contra atrasos do agendador do GitHub Actions.
 #
 # Observação: o GitHub desativa workflows agendados após ~60 dias SEM commits no
 # repositório. Se o projeto ficar parado, reative em Actions ou faça um commit.
@@ -17,9 +18,9 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /health (com retry p/ cold start do Render)
+      - name: Ping /health (com retry por resiliência)
         run: |
-          URL="https://cnpj-radar.onrender.com/health"
+          URL="https://radar.everestcontabilidade.com/health"
           for i in 1 2 3 4 5 6; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL" || echo 000)
             echo "tentativa $i: HTTP $code"
