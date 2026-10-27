@@ -2925,6 +2925,16 @@ export class CertidoesScraperService {
       try {
         await page.goto(FORM_URL, { waitUntil: 'networkidle', timeout: 30_000 });
 
+        // Achado real (27/10/2026): a plataforma e-Contrib abre um tour de
+        // boas-vindas (dialog) por cima do formulário em todo navegador
+        // "novo" (sem o cookie/localStorage de quem já viu) — como o
+        // scraper sempre sobe um contexto limpo, isso acontecia sempre, e
+        // o dialog bloqueava o clique em "Emitir CND", travando no timeout
+        // de 30s do Playwright (confirmado contra CNPJ real da A Araujo
+        // dos Santos: sem fechar o tour, trava; fechando, responde normal
+        // e revela um IRREGULAR real por débitos vencidos).
+        await page.getByRole('button', { name: /pular o tour/i }).click({ timeout: 5_000 }).catch(() => {});
+
         await page.locator('input[name="documento"]').fill(cnpjLimpo);
 
         const context = page.context();

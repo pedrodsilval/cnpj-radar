@@ -36,6 +36,12 @@ export interface ChecklistItem {
 
 const TODOS_TIPOS = Object.values(CertidaoTipo);
 
+// A extensão de Chrome processa um job em no máximo alguns minutos (timeout
+// interno de 3min no background.js) — depois disso, "ainda em andamento" não
+// é mais uma tentativa legítima, é um job zumbi (navegador fechado, conexão
+// perdida etc). 2h dá bastante margem de sobra antes de considerar expirado.
+const JOB_EXPIRADO_MS = 2 * 60 * 60 * 1000;
+
 function diasParaVencer(validade: string | null): number | null {
   if (!validade) return null;
   const diff = new Date(validade).getTime() - Date.now();
@@ -310,7 +316,21 @@ export class CertidoesService {
       ],
       order: { criadoEm: 'DESC' },
     });
-    if (existente) return existente;
+
+    if (existente) {
+      const idadeMs = Date.now() - new Date(existente.criadoEm).getTime();
+      if (idadeMs < JOB_EXPIRADO_MS) return existente;
+
+      // Job zumbi (achado real 27/10/2026: 4 empresas com jobs presos em
+      // EM_ANDAMENTO desde 30/09-01/10 — a extensão assumiu e nunca
+      // reportou resultado, provavelmente navegador fechado no meio do
+      // processamento). Sem essa expiração, "Consultar automaticamente"
+      // nunca mais tentava de novo pra essas empresas, pra sempre — o
+      // dedup acima sempre devolvia o mesmo job morto.
+      existente.status = CertidaoJobStatus.ERRO;
+      existente.resultadoMensagem = 'Job expirado sem resposta da extensão (provável fechamento do navegador/perda de conexão) — substituído por uma nova tentativa.';
+      await this.jobRepo.save(existente);
+    }
 
     const job = this.jobRepo.create({ empresaId: empresa.id, cnpj: sanitized, tipo, solicitadoPor: usuarioId });
     return this.jobRepo.save(job);
