@@ -8,6 +8,7 @@ interface Usuario {
   perfil: string
   ativo: boolean
   criadoEm: string
+  pastaDriveId: string | null
 }
 
 const PERFIL_LABELS: Record<string, string> = {
@@ -107,6 +108,60 @@ function ModalNovoUsuario({ onSalvo, onFechar }: ModalNovoProps) {
   )
 }
 
+// Aceita tanto o ID puro quanto uma URL completa de pasta do Drive e extrai
+// só o ID — assim o usuário pode colar o link da barra de endereço direto.
+function extrairIdPasta(valor: string): string {
+  const match = valor.match(/\/folders\/([a-zA-Z0-9_-]+)/)
+  return (match ? match[1] : valor).trim()
+}
+
+function CelulaPastaDrive({ usuario, onAtualizado }: { usuario: Usuario, onAtualizado: () => void }) {
+  const [editando, setEditando] = useState(false)
+  const [valor, setValor] = useState(usuario.pastaDriveId ?? '')
+  const [salvando, setSalvando] = useState(false)
+
+  async function salvar() {
+    setSalvando(true)
+    try {
+      const res = await apiFetch(`/auth/usuarios/${usuario.id}/pasta-drive`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pastaDriveId: valor ? extrairIdPasta(valor) : null }),
+      })
+      if (res.ok) { setEditando(false); onAtualizado() }
+    } finally { setSalvando(false) }
+  }
+
+  if (editando) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={valor}
+          onChange={e => setValor(e.target.value)}
+          placeholder="ID ou link da pasta no Drive"
+          autoComplete="off"
+          className="w-48 border border-gray-200 rounded-lg px-2 py-1 text-xs font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+        />
+        <button onClick={salvar} disabled={salvando} className="text-xs font-display font-bold text-primary hover:underline disabled:opacity-50">
+          {salvando ? '…' : 'Salvar'}
+        </button>
+        <button onClick={() => { setValor(usuario.pastaDriveId ?? ''); setEditando(false) }} className="text-xs font-display font-medium text-gray-400 hover:text-depth">
+          Cancelar
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <button onClick={() => setEditando(true)} className="text-xs font-body text-left hover:underline">
+      {usuario.pastaDriveId
+        ? <span className="text-depth font-display font-bold">Configurada</span>
+        : <span className="text-gray-400">Não configurada</span>}
+    </button>
+  )
+}
+
 export function UsuariosTab() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [carregando, setCarregando] = useState(true)
@@ -165,12 +220,13 @@ export function UsuariosTab() {
                 <th className="text-left px-4 py-3 text-xs font-display font-bold text-gray-400 uppercase tracking-wide">Nome</th>
                 <th className="text-left px-4 py-3 text-xs font-display font-bold text-gray-400 uppercase tracking-wide">E-mail</th>
                 <th className="text-left px-4 py-3 text-xs font-display font-bold text-gray-400 uppercase tracking-wide">Perfil</th>
+                <th className="text-left px-4 py-3 text-xs font-display font-bold text-gray-400 uppercase tracking-wide">Pasta Drive (lote)</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {usuarios.length === 0 ? (
-                <tr><td colSpan={4} className="text-center py-10 text-gray-400 font-body text-sm">Nenhum usuário cadastrado.</td></tr>
+                <tr><td colSpan={5} className="text-center py-10 text-gray-400 font-body text-sm">Nenhum usuário cadastrado.</td></tr>
               ) : usuarios.map(u => (
                 <tr key={u.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors">
                   <td className="px-4 py-3">
@@ -185,6 +241,9 @@ export function UsuariosTab() {
                     }`}>
                       {PERFIL_LABELS[u.perfil] ?? u.perfil}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <CelulaPastaDrive usuario={u} onAtualizado={carregar} />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button

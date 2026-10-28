@@ -25,6 +25,12 @@ export class Usuario {
   @Column({ name: 'token_version', type: 'int', default: 0 })
   tokenVersion: number;
 
+  // ID (ou URL) da pasta do Google Drive pra onde vão os relatórios de
+  // pré-análise enviados em lote por esse usuário — cada escritório/consultor
+  // configura a sua (ver gerarPreAnaliseLote + GoogleDriveService).
+  @Column({ name: 'pasta_drive_id', type: 'varchar', nullable: true })
+  pastaDriveId: string | null;
+
   @CreateDateColumn({ name: 'criado_em' })
   criadoEm: Date;
 

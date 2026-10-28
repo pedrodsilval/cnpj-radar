@@ -8,6 +8,7 @@ type CredencialTipo =
   | 'CERTIFICADO_A1'
   | 'API_INFOSIMPLES'
   | 'PORTAL_ECAC'
+  | 'GOOGLE_DRIVE_SERVICE_ACCOUNT'
   | 'OUTRO'
 
 interface Credencial {
@@ -28,6 +29,7 @@ const TIPO_LABELS: Record<CredencialTipo, string> = {
   CERTIFICADO_A1:  'Certificado A1',
   API_INFOSIMPLES: 'Infosimples',
   PORTAL_ECAC:     'Portal e-CAC',
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Google Drive',
   OUTRO:           'Outro',
 }
 
@@ -36,6 +38,7 @@ const TIPO_DESCRICAO: Record<CredencialTipo, string> = {
   CERTIFICADO_A1:  'Certificado digital .pfx + senha para portais que exigem ICP-Brasil',
   API_INFOSIMPLES: 'API key para consultas em lote via Infosimples (Fase 2)',
   PORTAL_ECAC:     'Login e senha do Portal e-CAC (Receita Federal)',
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Conta de serviço (JSON) usada pra enviar relatórios em lote pro Drive',
   OUTRO:           'Credencial avulsa',
 }
 
@@ -44,6 +47,7 @@ const TIPO_COR: Record<CredencialTipo, { badge: string; dot: string }> = {
   CERTIFICADO_A1:  { badge: 'bg-blue-50 text-blue-700 border-blue-200',       dot: 'bg-blue-500'   },
   API_INFOSIMPLES: { badge: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
   PORTAL_ECAC:     { badge: 'bg-amber-50 text-amber-700 border-amber-200',     dot: 'bg-amber-500'  },
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: { badge: 'bg-teal-50 text-teal-700 border-teal-200', dot: 'bg-teal-500' },
   OUTRO:           { badge: 'bg-gray-100 text-gray-600 border-gray-200',       dot: 'bg-gray-400'   },
 }
 
@@ -52,6 +56,7 @@ const TIPOS_OPCOES: CredencialTipo[] = [
   'CERTIFICADO_A1',
   'API_INFOSIMPLES',
   'PORTAL_ECAC',
+  'GOOGLE_DRIVE_SERVICE_ACCOUNT',
   'OUTRO',
 ]
 
@@ -100,6 +105,7 @@ function descricaoPadrao(tipo: CredencialTipo): string {
     CERTIFICADO_A1:  'Certificado A1',
     API_INFOSIMPLES: 'Chave Infosimples',
     PORTAL_ECAC:     'Login e-CAC',
+    GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Conta de serviço Drive',
     OUTRO:           'Credencial',
   }
   return mapa[tipo]
@@ -342,6 +348,28 @@ export function CredenciaisTab() {
                 value={campos.chaveApi ?? ''}
                 onChange={(v) => setCampos((p) => ({ ...p, chaveApi: v }))}
               />
+            )}
+
+            {!editandoId && campos.tipo === 'GOOGLE_DRIVE_SERVICE_ACCOUNT' && (
+              <div>
+                <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-1.5">
+                  Chave JSON da conta de serviço
+                </label>
+                <textarea
+                  value={campos.chaveApi ?? ''}
+                  onChange={(e) => setCampos((p) => ({ ...p, chaveApi: e.target.value }))}
+                  placeholder='{"type": "service_account", "client_email": "...", "private_key": "...", ...}'
+                  rows={6}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-xs font-mono text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
+                />
+                <p className="mt-1.5 text-xs text-gray-400 font-body">
+                  Cole o conteúdo inteiro do arquivo .json baixado no Google Cloud Console.
+                  Cada usuário precisa compartilhar sua pasta de destino com o e-mail dessa
+                  conta de serviço (campo "client_email" do JSON) pra receber os relatórios.
+                </p>
+              </div>
             )}
 
             {!editandoId && campos.tipo === 'CERTIFICADO_A1' && (

@@ -490,6 +490,8 @@ export function ClientesTab() {
   const [resumo, setResumo] = useState<Record<string, ResumoClienteCertidoes>>({})
   const [filtro, setFiltro] = useState<FiltroPendencia>('todos')
   const [baixandoLote, setBaixandoLote] = useState(false)
+  const [enviandoDrive, setEnviandoDrive] = useState(false)
+  const [resultadoDrive, setResultadoDrive] = useState<string | null>(null)
 
   const carregar = useCallback(async (signal?: AbortSignal) => {
     setCarregando(true); setErro(null)
@@ -546,6 +548,18 @@ export function ClientesTab() {
     } finally { setBaixandoLote(false) }
   }
 
+  async function enviarParaDrive() {
+    setEnviandoDrive(true)
+    setResultadoDrive(null)
+    try {
+      const res = await apiFetch('/relatorios/pre-analise-lote/drive', { method: 'POST' })
+      const json = await res.json() as { enviados?: number; total?: number; message?: string }
+      if (!res.ok) { setResultadoDrive(json.message ?? 'Não foi possível enviar pro Drive.'); return }
+      setResultadoDrive(`${json.enviados} de ${json.total} relatórios enviados pro Drive.`)
+    } catch { setResultadoDrive('Erro de rede ao enviar pro Drive.') }
+    finally { setEnviandoDrive(false) }
+  }
+
   const elegiveisLote = Object.values(resumo).filter(r => r.elegivelLote).length
 
   const empresasFiltradas = empresas.filter(e => {
@@ -597,10 +611,17 @@ export function ClientesTab() {
               </button>
             ))}
           </div>
-          <button onClick={baixarLote} disabled={baixandoLote || elegiveisLote === 0}
-            className="text-xs font-display font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-600 hover:text-depth hover:border-gray-300 transition-colors disabled:opacity-40 whitespace-nowrap">
-            {baixandoLote ? 'Gerando zip…' : `Baixar relatórios em lote (${elegiveisLote} regulares)`}
-          </button>
+          <div className="flex items-center gap-2">
+            {resultadoDrive && <span className="text-xs text-gray-500 font-body">{resultadoDrive}</span>}
+            <button onClick={enviarParaDrive} disabled={enviandoDrive || elegiveisLote === 0}
+              className="text-xs font-display font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-600 hover:text-depth hover:border-gray-300 transition-colors disabled:opacity-40 whitespace-nowrap">
+              {enviandoDrive ? 'Enviando…' : 'Enviar pro Drive'}
+            </button>
+            <button onClick={baixarLote} disabled={baixandoLote || elegiveisLote === 0}
+              className="text-xs font-display font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-600 hover:text-depth hover:border-gray-300 transition-colors disabled:opacity-40 whitespace-nowrap">
+              {baixandoLote ? 'Gerando zip…' : `Baixar em lote (${elegiveisLote} regulares)`}
+            </button>
+          </div>
         </div>
 
         {carregando ? (

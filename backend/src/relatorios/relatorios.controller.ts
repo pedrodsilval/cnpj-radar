@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Param, Post, Request, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { RelatoriosService } from './relatorios.service';
 
@@ -32,5 +32,10 @@ export class RelatoriosController {
       'X-Total-Relatorios': String(total),
     });
     res.send(buffer);
+  }
+
+  @Post('pre-analise-lote/drive')
+  async preAnaliseLoteDrive(@Request() req: { user: { id: string } }) {
+    return this.service.enviarLotePraDrive(req.user.id);
   }
 }

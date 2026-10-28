@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { chromium } from 'playwright';
@@ -7,10 +7,12 @@ import archiver from 'archiver';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao, CERTIDAO_LABELS, CertidaoStatus } from '../database/entities/certidao.entity';
+import { Usuario } from '../database/entities/usuario.entity';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
 import { RelatorioGerado } from './relatorio-gerado.entity';
 import { CertidoesService } from '../certidoes/certidoes.service';
+import { GoogleDriveService } from './google-drive.service';
 
 const STATUS_LABEL: Record<CertidaoStatus, string> = {
   [CertidaoStatus.REGULAR]: 'Regular',
@@ -60,8 +62,10 @@ export class RelatoriosService {
     @InjectRepository(Socio) private readonly socioRepo: Repository<Socio>,
     @InjectRepository(Certidao) private readonly certidaoRepo: Repository<Certidao>,
     @InjectRepository(RelatorioGerado) private readonly relatorioGeradoRepo: Repository<RelatorioGerado>,
+    @InjectRepository(Usuario) private readonly usuarioRepo: Repository<Usuario>,
     private readonly storage: SupabaseStorageService,
     private readonly certidoesService: CertidoesService,
+    private readonly googleDrive: GoogleDriveService,
   ) {}
 
   async listarGerados(cnpjBruto: string): Promise<RelatorioGerado[]> {
@@ -146,23 +150,36 @@ export class RelatoriosService {
     return { buffer: bufferFinal, nomeArquivo };
   }
 
-  // Zip com o relatório de pré-análise de cada cliente 100% regular — critério
-  // vem de resumoPendenciasClientes (certidoes.service.ts): só entra quem tem
-  // os 8 tipos REGULAR e nenhuma validade vencida. Clientes com pendência
-  // ficam de fora de propósito (ver pedido da Itauana, 28/10/2026) — eles
-  // exigem olhar individual antes de qualquer relatório sair pro cliente.
-  async gerarPreAnaliseLote(): Promise<{ buffer: Buffer; nomeArquivo: string; total: number }> {
+  // Clientes 100% regulares pro lote (critério vem de resumoPendenciasClientes
+  // em certidoes.service.ts: os 8 tipos REGULAR e nenhuma validade vencida),
+  // já com o nome "fatiado" pra nome de arquivo. Clientes com pendência ficam
+  // de fora de propósito (pedido da Itauana, 28/10/2026) — exigem olhar
+  // individual antes de qualquer relatório sair pro cliente.
+  private async listarElegiveisComSlug(): Promise<{ empresaId: string; cnpj: string; razaoSocial: string; slug: string }[]> {
     const resumo = await this.certidoesService.resumoPendenciasClientes();
     const elegiveis = resumo.filter((r) => r.elegivelLote);
-
-    const nomeArquivo = `pre-analise-lote-${new Date().toISOString().slice(0, 10)}.zip`;
-    if (elegiveis.length === 0) return { buffer: Buffer.alloc(0), nomeArquivo, total: 0 };
+    if (elegiveis.length === 0) return [];
 
     const empresas = await this.empresaRepo.find({
       where: { id: In(elegiveis.map((e) => e.empresaId)) },
       select: { id: true, razaoSocial: true },
     });
     const nomePorId = new Map(empresas.map((e) => [e.id, e.razaoSocial]));
+
+    return elegiveis.map((item) => {
+      const razaoSocial = nomePorId.get(item.empresaId) ?? item.cnpj;
+      const slug = razaoSocial
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+      return { empresaId: item.empresaId, cnpj: item.cnpj, razaoSocial, slug };
+    });
+  }
+
+  async gerarPreAnaliseLote(): Promise<{ buffer: Buffer; nomeArquivo: string; total: number }> {
+    const elegiveis = await this.listarElegiveisComSlug();
+
+    const nomeArquivo = `pre-analise-lote-${new Date().toISOString().slice(0, 10)}.zip`;
+    if (elegiveis.length === 0) return { buffer: Buffer.alloc(0), nomeArquivo, total: 0 };
 
     const archive = archiver('zip', { zlib: { level: 9 } });
     const chunks: Buffer[] = [];
@@ -176,11 +193,7 @@ export class RelatoriosService {
     for (const item of elegiveis) {
       try {
         const { buffer } = await this.gerarPreAnalisePdf(item.cnpj);
-        const razaoSocial = nomePorId.get(item.empresaId) ?? item.cnpj;
-        const slug = razaoSocial
-          .normalize('NFD').replace(/[̀-ͯ]/g, '')
-          .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
-        archive.append(buffer, { name: `${slug || item.cnpj}-${item.cnpj}.pdf` });
+        archive.append(buffer, { name: `${item.slug || item.cnpj}-${item.cnpj}.pdf` });
         incluidos++;
       } catch (err) {
         // Um cliente com erro na geração não deve travar o lote inteiro.
@@ -192,6 +205,32 @@ export class RelatoriosService {
     await done;
 
     return { buffer: Buffer.concat(chunks), nomeArquivo, total: incluidos };
+  }
+
+  // Mesmo critério do zip, mas sobe cada PDF individualmente pra pasta do
+  // Drive configurada pelo usuário que disparou o envio (usuarios.pasta_drive_id)
+  // — não existe vínculo cliente↔consultor no cadastro, então o destino é
+  // sempre "a pasta de quem clicou no botão" (decisão de 28/10/2026).
+  async enviarLotePraDrive(usuarioId: string): Promise<{ enviados: number; total: number }> {
+    const usuario = await this.usuarioRepo.findOne({ where: { id: usuarioId } });
+    if (!usuario?.pastaDriveId) {
+      throw new BadRequestException('Configure a pasta do Drive em Usuários antes de enviar.');
+    }
+
+    const elegiveis = await this.listarElegiveisComSlug();
+    let enviados = 0;
+    for (const item of elegiveis) {
+      try {
+        const { buffer } = await this.gerarPreAnalisePdf(item.cnpj);
+        await this.googleDrive.enviarPdf(`${item.razaoSocial} - ${item.cnpj}.pdf`, buffer, usuario.pastaDriveId);
+        enviados++;
+      } catch (err) {
+        // Um cliente com erro não deve travar o envio dos demais.
+        this.logger.warn(`Não consegui enviar o relatório de ${item.cnpj} pro Drive: ${err}`);
+      }
+    }
+
+    return { enviados, total: elegiveis.length };
   }
 
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {

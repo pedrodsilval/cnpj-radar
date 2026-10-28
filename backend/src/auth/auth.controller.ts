@@ -52,4 +52,18 @@ export class AuthController {
   desativarUsuario(@Param('id') id: string) {
     return this.authService.desativarUsuario(id);
   }
+
+  // Mesma regra de permissão de alterarSenha: admin configura qualquer um,
+  // o próprio usuário configura a sua.
+  @Patch('usuarios/:id/pasta-drive')
+  atualizarPastaDrive(
+    @Param('id') id: string,
+    @Body('pastaDriveId') pastaDriveId: string | null,
+    @Request() req: { user: { id: string; perfil: string } },
+  ) {
+    if (req.user.perfil !== 'administrador' && req.user.id !== id) {
+      throw new ForbiddenException('Você só pode configurar a sua própria pasta.');
+    }
+    return this.authService.atualizarPastaDrive(id, pastaDriveId);
+  }
 }

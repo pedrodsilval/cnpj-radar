@@ -5,6 +5,7 @@ export enum CredencialTipo {
   CERTIFICADO_A1  = 'CERTIFICADO_A1',
   API_INFOSIMPLES = 'API_INFOSIMPLES',
   PORTAL_ECAC     = 'PORTAL_ECAC',
+  GOOGLE_DRIVE_SERVICE_ACCOUNT = 'GOOGLE_DRIVE_SERVICE_ACCOUNT',
   OUTRO           = 'OUTRO',
 }
 
@@ -13,6 +14,7 @@ export const CREDENCIAL_LABELS: Record<CredencialTipo, string> = {
   [CredencialTipo.CERTIFICADO_A1]:  'Certificado A1 (.pfx + senha)',
   [CredencialTipo.API_INFOSIMPLES]: 'Infosimples (API Key)',
   [CredencialTipo.PORTAL_ECAC]:     'Portal e-CAC (login/senha)',
+  [CredencialTipo.GOOGLE_DRIVE_SERVICE_ACCOUNT]: 'Google Drive (conta de serviço)',
   [CredencialTipo.OUTRO]:           'Outro',
 };
 
