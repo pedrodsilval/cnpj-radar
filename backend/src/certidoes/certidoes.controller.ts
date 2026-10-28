@@ -26,6 +26,14 @@ export class CertidoesController {
     return this.service.alertas(dias ? Number(dias) : 30);
   }
 
+  // Atalhos de pendência por cliente, usado pela aba Clientes pra mostrar
+  // quem tem certidão irregular/pendente de perto (ver resumoPendenciasClientes
+  // em certidoes.service.ts).
+  @Get('resumo-clientes')
+  resumoClientes() {
+    return this.service.resumoPendenciasClientes();
+  }
+
   @Get('checklist/:cnpj')
   checklist(@Param('cnpj') cnpj: string) {
     return this.service.checklist(cnpj);

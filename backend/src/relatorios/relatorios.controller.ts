@@ -21,4 +21,16 @@ export class RelatoriosController {
   async listarGerados(@Param('cnpj') cnpj: string) {
     return this.service.listarGerados(cnpj);
   }
+
+  @Get('pre-analise-lote')
+  async preAnaliseLote(@Res() res: Response) {
+    const { buffer, nomeArquivo, total } = await this.service.gerarPreAnaliseLote();
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${nomeArquivo}"`,
+      'Content-Length': buffer.length,
+      'X-Total-Relatorios': String(total),
+    });
+    res.send(buffer);
+  }
 }

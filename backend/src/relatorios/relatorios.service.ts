@@ -1,14 +1,16 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { chromium } from 'playwright';
 import { PDFDocument } from 'pdf-lib';
+import archiver from 'archiver';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao, CERTIDAO_LABELS, CertidaoStatus } from '../database/entities/certidao.entity';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
 import { RelatorioGerado } from './relatorio-gerado.entity';
+import { CertidoesService } from '../certidoes/certidoes.service';
 
 const STATUS_LABEL: Record<CertidaoStatus, string> = {
   [CertidaoStatus.REGULAR]: 'Regular',
@@ -59,6 +61,7 @@ export class RelatoriosService {
     @InjectRepository(Certidao) private readonly certidaoRepo: Repository<Certidao>,
     @InjectRepository(RelatorioGerado) private readonly relatorioGeradoRepo: Repository<RelatorioGerado>,
     private readonly storage: SupabaseStorageService,
+    private readonly certidoesService: CertidoesService,
   ) {}
 
   async listarGerados(cnpjBruto: string): Promise<RelatorioGerado[]> {
@@ -141,6 +144,54 @@ export class RelatoriosService {
     }
 
     return { buffer: bufferFinal, nomeArquivo };
+  }
+
+  // Zip com o relatório de pré-análise de cada cliente 100% regular — critério
+  // vem de resumoPendenciasClientes (certidoes.service.ts): só entra quem tem
+  // os 8 tipos REGULAR e nenhuma validade vencida. Clientes com pendência
+  // ficam de fora de propósito (ver pedido da Itauana, 28/10/2026) — eles
+  // exigem olhar individual antes de qualquer relatório sair pro cliente.
+  async gerarPreAnaliseLote(): Promise<{ buffer: Buffer; nomeArquivo: string; total: number }> {
+    const resumo = await this.certidoesService.resumoPendenciasClientes();
+    const elegiveis = resumo.filter((r) => r.elegivelLote);
+
+    const nomeArquivo = `pre-analise-lote-${new Date().toISOString().slice(0, 10)}.zip`;
+    if (elegiveis.length === 0) return { buffer: Buffer.alloc(0), nomeArquivo, total: 0 };
+
+    const empresas = await this.empresaRepo.find({
+      where: { id: In(elegiveis.map((e) => e.empresaId)) },
+      select: { id: true, razaoSocial: true },
+    });
+    const nomePorId = new Map(empresas.map((e) => [e.id, e.razaoSocial]));
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const chunks: Buffer[] = [];
+    archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const done = new Promise<void>((resolve, reject) => {
+      archive.on('end', () => resolve());
+      archive.on('error', (err) => reject(err));
+    });
+
+    let incluidos = 0;
+    for (const item of elegiveis) {
+      try {
+        const { buffer } = await this.gerarPreAnalisePdf(item.cnpj);
+        const razaoSocial = nomePorId.get(item.empresaId) ?? item.cnpj;
+        const slug = razaoSocial
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+        archive.append(buffer, { name: `${slug || item.cnpj}-${item.cnpj}.pdf` });
+        incluidos++;
+      } catch (err) {
+        // Um cliente com erro na geração não deve travar o lote inteiro.
+        this.logger.warn(`Não consegui gerar o relatório de ${item.cnpj} pro lote: ${err}`);
+      }
+    }
+
+    await archive.finalize();
+    await done;
+
+    return { buffer: Buffer.concat(chunks), nomeArquivo, total: incluidos };
   }
 
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {

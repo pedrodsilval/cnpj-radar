@@ -40,7 +40,51 @@ interface RelatorioGerado {
   criadoEm: string
 }
 
+type PendenciaSeveridade = 'alerta' | 'pendente'
+
+interface PendenciaTag {
+  tipo: string
+  label: string
+  status: string
+  severidade: PendenciaSeveridade
+}
+
+interface ResumoClienteCertidoes {
+  empresaId: string
+  cnpj: string
+  pendencias: PendenciaTag[]
+  elegivelLote: boolean
+}
+
+// Sigla curta pra cada tipo de certidão — um atalho por pendência, em vez de
+// agrupar em blocos F/M/E (pedido da Itauana, 28/10/2026: cada tipo pendente
+// ganha sua própria tag, acumulando quantas forem necessárias).
+const TIPO_SIGLA: Record<string, string> = {
+  CND_FEDERAL: 'CND-F',
+  FGTS_CRF: 'FGTS',
+  CNDT_TRABALHISTA: 'CNDT',
+  DIVIDA_ATIVA: 'DAU',
+  ESTADUAL: 'EST',
+  MUNICIPAL: 'MUN',
+  INSCRICAO_ESTADUAL: 'IE',
+  INSCRICAO_MUNICIPAL: 'IM',
+}
+
 const LIMITE_ME = 360_000
+
+// Baixa um arquivo autenticado — um <a href download> comum não envia o
+// header Authorization, então o backend respondia 401 antes desse fetch+blob.
+async function baixarArquivo(url: string, nomeArquivo: string): Promise<void> {
+  const res = await apiFetch(url)
+  if (!res.ok) return
+  const blob = await res.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = nomeArquivo
+  a.click()
+  URL.revokeObjectURL(blobUrl)
+}
 
 function formatarMoeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -435,12 +479,17 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
 
 // ─── ClientesTab ──────────────────────────────────────────────────────────────
 
+type FiltroPendencia = 'todos' | 'pendentes' | 'regulares'
+
 export function ClientesTab() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [modal, setModal] = useState<{ aberto: boolean; empresa?: Empresa; certificado?: CertificadoPublico | null }>({ aberto: false })
+  const [resumo, setResumo] = useState<Record<string, ResumoClienteCertidoes>>({})
+  const [filtro, setFiltro] = useState<FiltroPendencia>('todos')
+  const [baixandoLote, setBaixandoLote] = useState(false)
 
   const carregar = useCallback(async (signal?: AbortSignal) => {
     setCarregando(true); setErro(null)
@@ -456,6 +505,15 @@ export function ClientesTab() {
     finally { if (!signal?.aborted) setCarregando(false) }
   }, [busca])
 
+  const carregarResumo = useCallback(async () => {
+    try {
+      const res = await apiFetch('/certidoes/resumo-clientes')
+      if (!res.ok) return
+      const lista = await res.json() as ResumoClienteCertidoes[]
+      setResumo(Object.fromEntries(lista.map(r => [r.empresaId, r])))
+    } catch { /* badges de pendência não são críticas pro resto da tela funcionar */ }
+  }, [])
+
   // AbortController evita que uma resposta antiga (ex: busca="l") sobrescreva
   // o resultado de uma busca mais recente (ex: busca="lyras") que chegou
   // primeiro — sem isso, digitar rápido podia deixar a lista com resultados
@@ -466,6 +524,8 @@ export function ClientesTab() {
     return () => controller.abort()
   }, [carregar])
 
+  useEffect(() => { void carregarResumo() }, [carregarResumo])
+
   async function abrirEdicao(empresa: Empresa) {
     const res = await apiFetch(`/empresas/${empresa.id}`)
     if (!res.ok) { setModal({ aberto: true, empresa }); return }
@@ -473,14 +533,36 @@ export function ClientesTab() {
     setModal({ aberto: true, empresa, certificado })
   }
 
+  function fecharModal() {
+    setModal({ aberto: false })
+    void carregarResumo()
+  }
+
+  async function baixarLote() {
+    setBaixandoLote(true)
+    try {
+      const nome = `pre-analise-lote-${new Date().toISOString().slice(0, 10)}.zip`
+      await baixarArquivo('/relatorios/pre-analise-lote', nome)
+    } finally { setBaixandoLote(false) }
+  }
+
+  const elegiveisLote = Object.values(resumo).filter(r => r.elegivelLote).length
+
+  const empresasFiltradas = empresas.filter(e => {
+    if (filtro === 'todos') return true
+    const r = resumo[e.id]
+    const temPendencia = r ? r.pendencias.length > 0 : true // sem resumo carregado ainda = trata como pendente, não esconde
+    return filtro === 'pendentes' ? temPendencia : !temPendencia
+  })
+
   return (
     <>
       {modal.aberto && (
         <ModalEmpresa
           empresa={modal.empresa}
           certificadoInicial={modal.certificado}
-          onFechar={() => setModal({ aberto: false })}
-          onSalvo={() => { setModal({ aberto: false }); void carregar() }}
+          onFechar={fecharModal}
+          onSalvo={() => { setModal({ aberto: false }); void carregar(); void carregarResumo() }}
         />
       )}
 
@@ -500,6 +582,27 @@ export function ClientesTab() {
           </div>
         </div>
 
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-xl p-1">
+            {([
+              ['todos', 'Todos'],
+              ['pendentes', 'Com pendência'],
+              ['regulares', 'Regulares'],
+            ] as [FiltroPendencia, string][]).map(([valor, label]) => (
+              <button key={valor} onClick={() => setFiltro(valor)}
+                className={`text-xs font-display font-bold px-3 py-1.5 rounded-lg transition-colors ${
+                  filtro === valor ? 'bg-white text-depth shadow-sm' : 'text-gray-500 hover:text-depth'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button onClick={baixarLote} disabled={baixandoLote || elegiveisLote === 0}
+            className="text-xs font-display font-bold px-3 py-2 rounded-xl border border-gray-200 text-gray-600 hover:text-depth hover:border-gray-300 transition-colors disabled:opacity-40 whitespace-nowrap">
+            {baixandoLote ? 'Gerando zip…' : `Baixar relatórios em lote (${elegiveisLote} regulares)`}
+          </button>
+        </div>
+
         {carregando ? (
           <div className="py-8 text-center text-gray-400 text-sm font-body">Carregando empresas…</div>
         ) : erro ? (
@@ -511,23 +614,41 @@ export function ClientesTab() {
               Cadastrar primeira empresa
             </button>
           </div>
+        ) : empresasFiltradas.length === 0 ? (
+          <div className="py-8 text-center text-gray-400 text-sm font-body">Nenhuma empresa nesse filtro.</div>
         ) : (
           <div className="space-y-2">
-            {empresas.map(e => (
-              <button key={e.id} onClick={() => abrirEdicao(e)}
-                className="w-full text-left bg-white rounded-2xl border border-gray-100 p-4 hover:border-primary/30 transition-colors">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="font-display font-bold text-depth text-sm leading-tight">{e.razaoSocial}</p>
-                    <p className="text-xs text-gray-400 font-body mt-0.5">{formatarCnpj(e.cnpj)}</p>
+            {empresasFiltradas.map(e => {
+              const r = resumo[e.id]
+              return (
+                <button key={e.id} onClick={() => abrirEdicao(e)}
+                  className="w-full text-left bg-white rounded-2xl border border-gray-100 p-4 hover:border-primary/30 transition-colors">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-display font-bold text-depth text-sm leading-tight">{e.razaoSocial}</p>
+                      <p className="text-xs text-gray-400 font-body mt-0.5">{formatarCnpj(e.cnpj)}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 justify-end items-center">
+                      {e.inscricaoMobiliaria && <span className="text-[11px] font-display font-bold text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-full">Insc. Mobiliária</span>}
+                      {e.cga && <span className="text-[11px] font-display font-bold text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-full">CGA</span>}
+                      {r && r.pendencias.length === 0 && (
+                        <span className="text-[11px] font-display font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">✓ Regular</span>
+                      )}
+                      {r?.pendencias.map(p => (
+                        <span key={p.tipo} title={`${p.label}: ${p.status}`}
+                          className={`text-[11px] font-display font-bold px-1.5 py-0.5 rounded-full border ${
+                            p.severidade === 'alerta'
+                              ? 'text-red-700 bg-red-50 border-red-200'
+                              : 'text-amber-700 bg-amber-50 border-amber-200'
+                          }`}>
+                          {TIPO_SIGLA[p.tipo] ?? p.tipo}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5 justify-end">
-                    {e.inscricaoMobiliaria && <span className="text-[11px] font-display font-bold text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-full">Insc. Mobiliária</span>}
-                    {e.cga && <span className="text-[11px] font-display font-bold text-gray-500 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded-full">CGA</span>}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              )
+            })}
           </div>
         )}
       </div>

@@ -34,6 +34,25 @@ export interface ChecklistItem {
   viaFilaExtensao: boolean;
 }
 
+// 'alerta' = problema confirmado (irregular ou certidão regular mas vencida);
+// 'pendente' = ainda não dá pra saber (nunca consultada, falhou a automação,
+// exige certificado digital ou foi marcada como "consulta manual" sem dado).
+export type PendenciaSeveridade = 'alerta' | 'pendente';
+
+export interface PendenciaTag {
+  tipo: CertidaoTipo;
+  label: string;
+  status: CertidaoStatus;
+  severidade: PendenciaSeveridade;
+}
+
+export interface ResumoClienteCertidoes {
+  empresaId: string;
+  cnpj: string;
+  pendencias: PendenciaTag[];
+  elegivelLote: boolean;
+}
+
 const TODOS_TIPOS = Object.values(CertidaoTipo);
 
 // A extensão de Chrome processa um job em no máximo alguns minutos (timeout
@@ -156,6 +175,43 @@ export class CertidoesService {
         observacoes: c?.observacoes ?? null,
         viaFilaExtensao: requerFilaExtensao(tipo, empresa),
       };
+    });
+  }
+
+  // Um atalho por tipo de certidão com pendência (em vez de agrupar em 3
+  // blocos F/M/E) — um cliente pode acumular até os 8 atalhos se tudo
+  // estiver pendente. "elegivelLote" só é true quando os 8 tipos estão
+  // REGULAR e nenhum está vencido — é o critério pra entrar no relatório em
+  // lote (ver gerarPreAnaliseLote em relatorios.service.ts).
+  async resumoPendenciasClientes(): Promise<ResumoClienteCertidoes[]> {
+    const [empresas, certidoes] = await Promise.all([
+      this.empresaRepo.find({ select: { id: true, cnpj: true } }),
+      this.certidaoRepo.find(),
+    ]);
+
+    const porEmpresa = new Map<string, Map<CertidaoTipo, Certidao>>();
+    for (const c of certidoes) {
+      if (!porEmpresa.has(c.empresaId)) porEmpresa.set(c.empresaId, new Map());
+      porEmpresa.get(c.empresaId)!.set(c.tipo, c);
+    }
+
+    return empresas.map((empresa) => {
+      const mapa = porEmpresa.get(empresa.id) ?? new Map<CertidaoTipo, Certidao>();
+      const pendencias: PendenciaTag[] = [];
+
+      for (const tipo of TODOS_TIPOS) {
+        const c = mapa.get(tipo);
+        const status = c?.status ?? CertidaoStatus.NAO_CONSULTADA;
+        const vencida = status === CertidaoStatus.REGULAR && (diasParaVencer(c?.validade ?? null) ?? 0) < 0;
+
+        if (status === CertidaoStatus.IRREGULAR || vencida) {
+          pendencias.push({ tipo, label: CERTIDAO_LABELS[tipo], status, severidade: 'alerta' });
+        } else if (status !== CertidaoStatus.REGULAR) {
+          pendencias.push({ tipo, label: CERTIDAO_LABELS[tipo], status, severidade: 'pendente' });
+        }
+      }
+
+      return { empresaId: empresa.id, cnpj: empresa.cnpj, pendencias, elegivelLote: pendencias.length === 0 };
     });
   }
 

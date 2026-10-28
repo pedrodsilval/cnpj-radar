@@ -7,9 +7,10 @@ import { RelatorioGerado } from './relatorio-gerado.entity';
 import { RelatoriosService } from './relatorios.service';
 import { RelatoriosController } from './relatorios.controller';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
+import { CertidoesModule } from '../certidoes/certidoes.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Empresa, Socio, Certidao, RelatorioGerado])],
+  imports: [TypeOrmModule.forFeature([Empresa, Socio, Certidao, RelatorioGerado]), CertidoesModule],
   providers: [RelatoriosService, SupabaseStorageService],
   controllers: [RelatoriosController],
 })
