@@ -46,6 +46,26 @@ export class CredenciaisService {
     return this.toPublic(await this.repo.save(credencial));
   }
 
+  // Upsert por tipo — usado por fluxos que a própria aplicação preenche
+  // sozinha (ex: refresh token do Drive após o callback OAuth), onde só faz
+  // sentido existir uma credencial ativa desse tipo por vez.
+  async salvarOuAtualizarPorTipo(tipo: CredencialTipo, descricao: string, valor: string): Promise<CredencialPublica> {
+    const { valor: enc, iv, tag } = this.cript.encrypt(valor);
+    const existente = await this.repo.findOne({ where: { tipo } });
+
+    if (existente) {
+      existente.descricao = descricao;
+      existente.valorCriptografado = enc;
+      existente.iv = iv;
+      existente.tag = tag;
+      existente.ativo = true;
+      return this.toPublic(await this.repo.save(existente));
+    }
+
+    const nova = this.repo.create({ tipo, descricao, valorCriptografado: enc, iv, tag });
+    return this.toPublic(await this.repo.save(nova));
+  }
+
   async remover(id: string): Promise<{ ok: boolean }> {
     const credencial = await this.repo.findOne({ where: { id } });
     if (!credencial) throw new NotFoundException(`Credencial ${id} não encontrada.`);

@@ -9,6 +9,8 @@ type CredencialTipo =
   | 'API_INFOSIMPLES'
   | 'PORTAL_ECAC'
   | 'GOOGLE_DRIVE_SERVICE_ACCOUNT'
+  | 'GOOGLE_OAUTH_CLIENT'
+  | 'GOOGLE_DRIVE_REFRESH_TOKEN'
   | 'OUTRO'
 
 interface Credencial {
@@ -29,7 +31,9 @@ const TIPO_LABELS: Record<CredencialTipo, string> = {
   CERTIFICADO_A1:  'Certificado A1',
   API_INFOSIMPLES: 'Infosimples',
   PORTAL_ECAC:     'Portal e-CAC',
-  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Google Drive',
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Google Drive (conta de serviço)',
+  GOOGLE_OAUTH_CLIENT: 'Google OAuth (Client ID/Secret)',
+  GOOGLE_DRIVE_REFRESH_TOKEN: 'Google Drive (conta conectada)',
   OUTRO:           'Outro',
 }
 
@@ -38,7 +42,9 @@ const TIPO_DESCRICAO: Record<CredencialTipo, string> = {
   CERTIFICADO_A1:  'Certificado digital .pfx + senha para portais que exigem ICP-Brasil',
   API_INFOSIMPLES: 'API key para consultas em lote via Infosimples (Fase 2)',
   PORTAL_ECAC:     'Login e senha do Portal e-CAC (Receita Federal)',
-  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Conta de serviço (JSON) usada pra enviar relatórios em lote pro Drive',
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Descontinuado — contas de serviço não têm cota própria no Drive',
+  GOOGLE_OAUTH_CLIENT: 'Client ID e Secret do app OAuth (Google Cloud Console)',
+  GOOGLE_DRIVE_REFRESH_TOKEN: 'Preenchida automaticamente ao conectar uma conta — não editável aqui',
   OUTRO:           'Credencial avulsa',
 }
 
@@ -47,16 +53,22 @@ const TIPO_COR: Record<CredencialTipo, { badge: string; dot: string }> = {
   CERTIFICADO_A1:  { badge: 'bg-blue-50 text-blue-700 border-blue-200',       dot: 'bg-blue-500'   },
   API_INFOSIMPLES: { badge: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
   PORTAL_ECAC:     { badge: 'bg-amber-50 text-amber-700 border-amber-200',     dot: 'bg-amber-500'  },
-  GOOGLE_DRIVE_SERVICE_ACCOUNT: { badge: 'bg-teal-50 text-teal-700 border-teal-200', dot: 'bg-teal-500' },
+  GOOGLE_DRIVE_SERVICE_ACCOUNT: { badge: 'bg-gray-100 text-gray-500 border-gray-200', dot: 'bg-gray-400' },
+  GOOGLE_OAUTH_CLIENT: { badge: 'bg-teal-50 text-teal-700 border-teal-200', dot: 'bg-teal-500' },
+  GOOGLE_DRIVE_REFRESH_TOKEN: { badge: 'bg-teal-50 text-teal-700 border-teal-200', dot: 'bg-teal-500' },
   OUTRO:           { badge: 'bg-gray-100 text-gray-600 border-gray-200',       dot: 'bg-gray-400'   },
 }
 
+// GOOGLE_DRIVE_REFRESH_TOKEN fica de fora de propósito — é preenchida pelo
+// callback OAuth (ver botão "Conectar conta do Drive" mais abaixo), nunca
+// cadastrada manualmente. GOOGLE_DRIVE_SERVICE_ACCOUNT também fica de fora —
+// descontinuada (ver comentário no backend).
 const TIPOS_OPCOES: CredencialTipo[] = [
   'API_2CAPTCHA',
   'CERTIFICADO_A1',
   'API_INFOSIMPLES',
   'PORTAL_ECAC',
-  'GOOGLE_DRIVE_SERVICE_ACCOUNT',
+  'GOOGLE_OAUTH_CLIENT',
   'OUTRO',
 ]
 
@@ -82,6 +94,9 @@ interface CamposFormulario {
   // campos login/senha
   login?: string
   senha?: string
+  // campos Google OAuth Client
+  clientId?: string
+  clientSecret?: string
   // campos certificado A1
   pfxBase64?: string
   pfxNome?: string
@@ -94,6 +109,8 @@ function camposParaValor(campos: CamposFormulario): string {
       return JSON.stringify({ pfxBase64: campos.pfxBase64 ?? '', senha: campos.pfxSenha ?? '' })
     case 'PORTAL_ECAC':
       return JSON.stringify({ login: campos.login ?? '', senha: campos.senha ?? '' })
+    case 'GOOGLE_OAUTH_CLIENT':
+      return JSON.stringify({ client_id: campos.clientId ?? '', client_secret: campos.clientSecret ?? '' })
     default:
       return campos.chaveApi ?? ''
   }
@@ -106,14 +123,76 @@ function descricaoPadrao(tipo: CredencialTipo): string {
     API_INFOSIMPLES: 'Chave Infosimples',
     PORTAL_ECAC:     'Login e-CAC',
     GOOGLE_DRIVE_SERVICE_ACCOUNT: 'Conta de serviço Drive',
+    GOOGLE_OAUTH_CLIENT: 'OAuth Client cnpj-radar',
+    GOOGLE_DRIVE_REFRESH_TOKEN: 'Conta Drive conectada',
     OUTRO:           'Credencial',
   }
   return mapa[tipo]
 }
 
+// ─── ConexaoDrive ─────────────────────────────────────────────────────────────
+
+interface StatusDrive {
+  conectado: boolean
+  descricao?: string
+}
+
+function ConexaoDrive() {
+  const [status, setStatus] = useState<StatusDrive | null>(null)
+  const [carregando, setCarregando] = useState(true)
+  const [conectando, setConectando] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+
+  async function carregar() {
+    setCarregando(true)
+    try {
+      const res = await apiFetch('/relatorios/drive/status')
+      if (res.ok) setStatus(await res.json() as StatusDrive)
+    } catch { /* silencioso — card mostra "não conectado" por padrão */ }
+    finally { setCarregando(false) }
+  }
+
+  useEffect(() => { void carregar() }, [])
+
+  async function conectar() {
+    setConectando(true)
+    setErro(null)
+    try {
+      const res = await apiFetch('/relatorios/drive/autorizar')
+      const json = await res.json() as { url?: string; message?: string }
+      if (!res.ok || !json.url) { setErro(json.message ?? 'Não foi possível iniciar a conexão. Cadastre o Google OAuth Client primeiro.'); return }
+      window.location.href = json.url
+    } catch { setErro('Erro de rede ao iniciar a conexão.') }
+    finally { setConectando(false) }
+  }
+
+  return (
+    <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-6 flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <h3 className="font-display font-bold text-depth text-sm mb-1">Conta do Google Drive</h3>
+        {carregando ? (
+          <p className="text-gray-400 text-sm font-body">Verificando…</p>
+        ) : status?.conectado ? (
+          <p className="text-emerald-600 text-sm font-body">✓ {status.descricao}</p>
+        ) : (
+          <p className="text-gray-400 text-sm font-body">Nenhuma conta conectada ainda — necessário pro envio em lote pro Drive.</p>
+        )}
+        {erro && <p className="text-danger text-xs font-display font-bold mt-1">⚠ {erro}</p>}
+      </div>
+      <button
+        onClick={conectar}
+        disabled={conectando}
+        className="bg-depth text-white font-display font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-primary transition-colors disabled:opacity-50 whitespace-nowrap"
+      >
+        {conectando ? 'Abrindo…' : status?.conectado ? 'Reconectar' : 'Conectar conta do Drive'}
+      </button>
+    </div>
+  )
+}
+
 // ─── CredenciaisTab ───────────────────────────────────────────────────────────
 
-export function CredenciaisTab() {
+export function CredenciaisTab({ avisoInicial }: { avisoInicial?: { tipo: 'sucesso' | 'erro'; texto: string } | null }) {
   const [lista, setLista]             = useState<Credencial[]>([])
   const [carregando, setCarregando]   = useState(true)
   const [erro, setErro]               = useState<string | null>(null)
@@ -281,6 +360,16 @@ export function CredenciaisTab() {
         </p>
       </div>
 
+      {avisoInicial && (
+        <div className={`rounded-xl px-4 py-3 text-sm font-body ${
+          avisoInicial.tipo === 'sucesso' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-red-50 border border-red-200 text-red-700'
+        }`}>
+          {avisoInicial.tipo === 'sucesso' ? '✓ ' : '⚠ '}{avisoInicial.texto}
+        </div>
+      )}
+
+      <ConexaoDrive />
+
       {/* Formulário inline */}
       {mostraForm && (
         <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-6">
@@ -350,24 +439,30 @@ export function CredenciaisTab() {
               />
             )}
 
-            {!editandoId && campos.tipo === 'GOOGLE_DRIVE_SERVICE_ACCOUNT' && (
-              <div>
-                <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-1.5">
-                  Chave JSON da conta de serviço
-                </label>
-                <textarea
-                  value={campos.chaveApi ?? ''}
-                  onChange={(e) => setCampos((p) => ({ ...p, chaveApi: e.target.value }))}
-                  placeholder='{"type": "service_account", "client_email": "...", "private_key": "...", ...}'
-                  rows={6}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-xs font-mono text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
+            {!editandoId && campos.tipo === 'GOOGLE_OAUTH_CLIENT' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-1.5">
+                    Client ID
+                  </label>
+                  <input
+                    type="text"
+                    value={campos.clientId ?? ''}
+                    onChange={(e) => setCampos((p) => ({ ...p, clientId: e.target.value }))}
+                    placeholder="123456789-abc.apps.googleusercontent.com"
+                    autoComplete="off"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent placeholder:text-gray-400"
+                  />
+                </div>
+                <CampoChaveApi
+                  label="Client Secret"
+                  placeholder="GOCSPX-..."
+                  value={campos.clientSecret ?? ''}
+                  onChange={(v) => setCampos((p) => ({ ...p, clientSecret: v }))}
                 />
-                <p className="mt-1.5 text-xs text-gray-400 font-body">
-                  Cole o conteúdo inteiro do arquivo .json baixado no Google Cloud Console.
-                  Cada usuário precisa compartilhar sua pasta de destino com o e-mail dessa
-                  conta de serviço (campo "client_email" do JSON) pra receber os relatórios.
+                <p className="text-xs text-gray-400 font-body">
+                  Vêm da tela "Credenciais" do projeto no Google Cloud Console, ao criar um OAuth Client ID
+                  do tipo "App da Web". Depois de cadastrar aqui, use o botão "Conectar conta do Drive" abaixo.
                 </p>
               </div>
             )}

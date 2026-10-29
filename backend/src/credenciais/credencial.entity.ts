@@ -5,7 +5,13 @@ export enum CredencialTipo {
   CERTIFICADO_A1  = 'CERTIFICADO_A1',
   API_INFOSIMPLES = 'API_INFOSIMPLES',
   PORTAL_ECAC     = 'PORTAL_ECAC',
+  // Descontinuado: contas de serviço não têm cota própria de armazenamento
+  // no Drive (só funcionam com Shared Drives do Workspace). Mantido só pra
+  // não quebrar a leitura da credencial já cadastrada antes dessa descoberta
+  // (ver GOOGLE_OAUTH_CLIENT/GOOGLE_DRIVE_REFRESH_TOKEN, 28/10/2026).
   GOOGLE_DRIVE_SERVICE_ACCOUNT = 'GOOGLE_DRIVE_SERVICE_ACCOUNT',
+  GOOGLE_OAUTH_CLIENT = 'GOOGLE_OAUTH_CLIENT',
+  GOOGLE_DRIVE_REFRESH_TOKEN = 'GOOGLE_DRIVE_REFRESH_TOKEN',
   OUTRO           = 'OUTRO',
 }
 
@@ -14,7 +20,9 @@ export const CREDENCIAL_LABELS: Record<CredencialTipo, string> = {
   [CredencialTipo.CERTIFICADO_A1]:  'Certificado A1 (.pfx + senha)',
   [CredencialTipo.API_INFOSIMPLES]: 'Infosimples (API Key)',
   [CredencialTipo.PORTAL_ECAC]:     'Portal e-CAC (login/senha)',
-  [CredencialTipo.GOOGLE_DRIVE_SERVICE_ACCOUNT]: 'Google Drive (conta de serviço)',
+  [CredencialTipo.GOOGLE_DRIVE_SERVICE_ACCOUNT]: 'Google Drive (conta de serviço — descontinuado)',
+  [CredencialTipo.GOOGLE_OAUTH_CLIENT]: 'Google OAuth (Client ID/Secret)',
+  [CredencialTipo.GOOGLE_DRIVE_REFRESH_TOKEN]: 'Google Drive (conta autorizada)',
   [CredencialTipo.OUTRO]:           'Outro',
 };
 

@@ -542,6 +542,24 @@ function App() {
   const [proposta, setProposta]       = useState<PropostaState>(PROPOSTA_IDLE)
   const queryIdRef                    = useRef(0)
   const contagemAlertas                             = useContagemAlertas()
+  const [avisoDrive, setAvisoDrive]   = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
+
+  // Trata o retorno do redirect OAuth do Drive (backend redireciona pra
+  // /?vista=config&drive_conectado=... ou &drive_erro=...) — lê uma vez no
+  // carregamento e limpa a query string pra não reprocessar num refresh.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const vistaParam = params.get('vista')
+    const conectado = params.get('drive_conectado')
+    const erro = params.get('drive_erro')
+    if (!vistaParam && !conectado && !erro) return
+
+    if (vistaParam === 'config') setVista('config')
+    if (conectado) setAvisoDrive({ tipo: 'sucesso', texto: `Conta do Drive conectada: ${conectado}` })
+    if (erro) setAvisoDrive({ tipo: 'erro', texto: erro })
+
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [])
 
   const usuario = getUsuario()
 
@@ -812,7 +830,7 @@ function App() {
           {vista === 'clientes'   && <ClientesTab />}
 
           {/* Vista Configurações */}
-          {vista === 'config' && <CredenciaisTab />}
+          {vista === 'config' && <CredenciaisTab avisoInicial={avisoDrive} />}
 
           {/* Vista Usuários (admin only) */}
           {vista === 'usuarios' && <UsuariosTab />}
