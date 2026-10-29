@@ -46,6 +46,13 @@ export class RelatoriosController {
     return this.service.enviarLotePraDrive(req.user.id);
   }
 
+  // Envio avulso — usado quando o usuário confirma mandar mesmo com
+  // pendência (aviso fica a cargo do frontend, ver PastaDriveCliente).
+  @Post('pre-analise/:cnpj/drive')
+  async preAnaliseUnicoDrive(@Param('cnpj') cnpj: string) {
+    return this.service.enviarUnicoPraDrive(cnpj);
+  }
+
   @Roles('administrador')
   @Get('drive/status')
   async driveStatus() {

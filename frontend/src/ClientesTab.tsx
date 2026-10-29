@@ -117,10 +117,12 @@ interface PastaCandidata {
   pontuacao: number
 }
 
-function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
+function PastaDriveCliente({ empresaId, cnpj, razaoSocial, pastaDriveIdInicial, pendencias }: {
   empresaId: string
+  cnpj: string
   razaoSocial: string
   pastaDriveIdInicial: string | null
+  pendencias: PendenciaTag[]
 }) {
   const [pastaAtual, setPastaAtual] = useState(pastaDriveIdInicial)
   const [buscando, setBuscando] = useState(false)
@@ -130,6 +132,28 @@ function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
   const [editandoManual, setEditandoManual] = useState(false)
   const [valorManual, setValorManual] = useState('')
   const [salvandoManual, setSalvandoManual] = useState(false)
+
+  const [confirmandoEnvioComPendencia, setConfirmandoEnvioComPendencia] = useState(false)
+  const [enviando, setEnviando] = useState(false)
+  const [resultadoEnvio, setResultadoEnvio] = useState<string | null>(null)
+
+  async function enviarAgora() {
+    setEnviando(true); setResultadoEnvio(null); setErro(null)
+    try {
+      const res = await apiFetch(`/relatorios/pre-analise/${cnpj}/drive`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) { setErro((json as { message?: string }).message ?? 'Não foi possível enviar.'); return }
+      setResultadoEnvio(`✓ Enviado: ${(json as { nomeArquivo: string }).nomeArquivo}`)
+      setConfirmandoEnvioComPendencia(false)
+    } catch { setErro('Erro de rede ao enviar.') }
+    finally { setEnviando(false) }
+  }
+
+  function clicarEnviar() {
+    setResultadoEnvio(null)
+    if (pendencias.length > 0) { setConfirmandoEnvioComPendencia(true); return }
+    void enviarAgora()
+  }
 
   async function buscarCandidatos() {
     setBuscando(true); setErro(null); setCandidatos(null)
@@ -177,7 +201,7 @@ function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
 
   return (
     <div className="pt-3 border-t border-gray-100">
-      <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-2">Pasta no Drive (envio em lote)</p>
+      <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-2">Pasta no Drive</p>
 
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <span className="text-xs font-body text-gray-600">
@@ -219,7 +243,47 @@ function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
         </div>
       )}
 
-      {erro && <p className="text-xs text-danger font-display font-bold">⚠ {erro}</p>}
+      {erro && <p className="text-xs text-danger font-display font-bold mb-2">⚠ {erro}</p>}
+
+      {pastaAtual && (
+        <div className="pt-2 border-t border-gray-100">
+          <button onClick={clicarEnviar} disabled={enviando}
+            className="text-xs font-display font-bold bg-depth text-white px-3 py-1.5 rounded-lg hover:bg-primary transition-colors disabled:opacity-50">
+            {enviando ? 'Enviando…' : 'Enviar relatório pro Drive agora'}
+          </button>
+          {resultadoEnvio && <p className="text-xs text-emerald-600 font-body mt-1.5">{resultadoEnvio}</p>}
+
+          {confirmandoEnvioComPendencia && (
+            <div className="mt-2 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5">
+              <p className="text-xs font-display font-bold text-amber-800 mb-1">
+                ⚠ Esse cliente NÃO está 100% regular — tem {pendencias.length} pendência{pendencias.length > 1 ? 's' : ''}:
+              </p>
+              <div className="flex flex-wrap gap-1 mb-2">
+                {pendencias.map(p => (
+                  <span key={p.tipo} className={`text-[11px] font-display font-bold px-1.5 py-0.5 rounded-full border ${
+                    p.severidade === 'alerta' ? 'text-red-700 bg-red-50 border-red-200' : 'text-amber-700 bg-amber-100 border-amber-300'
+                  }`}>
+                    {p.label}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-amber-700 font-body mb-2">
+                O relatório enviado vai refletir esse(s) problema(s) — confirma que quer enviar mesmo assim?
+              </p>
+              <div className="flex gap-2">
+                <button onClick={enviarAgora} disabled={enviando}
+                  className="text-xs font-display font-bold bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50">
+                  {enviando ? 'Enviando…' : 'Enviar mesmo assim'}
+                </button>
+                <button onClick={() => setConfirmandoEnvioComPendencia(false)}
+                  className="text-xs font-display font-medium text-gray-500 hover:text-depth">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -229,11 +293,12 @@ function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
 interface ModalProps {
   empresa?: Empresa
   certificadoInicial?: CertificadoPublico | null
+  pendencias?: PendenciaTag[]
   onSalvo: () => void
   onFechar: () => void
 }
 
-function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalProps) {
+function ModalEmpresa({ empresa, certificadoInicial, pendencias, onSalvo, onFechar }: ModalProps) {
   const editando = !!empresa
   const [cnpj, setCnpj] = useState(empresa?.cnpj ?? '')
   const [razaoSocial, setRazaoSocial] = useState(empresa?.razaoSocial ?? '')
@@ -571,7 +636,7 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
                 <p className="text-xs text-gray-400 font-body">Nenhum relatório gerado ainda.</p>
               )}
 
-              <PastaDriveCliente empresaId={empresa!.id} razaoSocial={empresa!.razaoSocial} pastaDriveIdInicial={empresa!.pastaDriveId} />
+              <PastaDriveCliente empresaId={empresa!.id} cnpj={empresa!.cnpj} razaoSocial={empresa!.razaoSocial} pastaDriveIdInicial={empresa!.pastaDriveId} pendencias={pendencias ?? []} />
             </div>
           )}
         </div>
@@ -696,6 +761,7 @@ export function ClientesTab() {
         <ModalEmpresa
           empresa={modal.empresa}
           certificadoInicial={modal.certificado}
+          pendencias={modal.empresa ? resumo[modal.empresa.id]?.pendencias : undefined}
           onFechar={fecharModal}
           onSalvo={() => { setModal({ aberto: false }); void carregar(); void carregarResumo() }}
         />

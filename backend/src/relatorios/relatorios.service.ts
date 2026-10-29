@@ -232,6 +232,24 @@ export class RelatoriosService {
     return { enviados, total: elegiveis.length, semPasta };
   }
 
+  // Envio avulso de UM cliente específico — ao contrário do lote, não exige
+  // os 8 tipos regulares: o usuário pode mandar mesmo com pendência (o
+  // frontend mostra um aviso explícito antes, com a lista do que está
+  // pendente, pra decisão consciente — pedido de 29/10/2026).
+  async enviarUnicoPraDrive(cnpjBruto: string): Promise<{ nomeArquivo: string }> {
+    const cnpj = sanitizeCnpj(cnpjBruto);
+    const empresa = await this.empresaRepo.findOne({ where: { cnpj } });
+    if (!empresa) throw new NotFoundException('Empresa não encontrada.');
+    if (!empresa.pastaDriveId) {
+      throw new BadRequestException('Configure a pasta do Drive desse cliente antes de enviar.');
+    }
+
+    const { buffer } = await this.gerarPreAnalisePdf(cnpj);
+    const nomeArquivo = `${empresa.razaoSocial} - ${cnpj}.pdf`;
+    await this.googleDrive.enviarPdf(nomeArquivo, buffer, empresa.pastaDriveId);
+    return { nomeArquivo };
+  }
+
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {
     const endereco = [
       empresa.logradouro,
