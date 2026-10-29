@@ -1,9 +1,10 @@
-import { Controller, Get, Param, Post, Query, Request, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Request, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { RelatoriosService } from './relatorios.service';
-import { GoogleDriveService } from './google-drive.service';
+import { GoogleDriveService } from '../google-drive/google-drive.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { extrairIdPasta } from '../google-drive/extrair-id-pasta.util';
 
 @Controller('relatorios')
 export class RelatoriosController {
@@ -55,6 +56,21 @@ export class RelatoriosController {
   @Get('drive/autorizar')
   async driveAutorizar() {
     return { url: await this.googleDrive.gerarUrlAutorizacao() };
+  }
+
+  @Roles('administrador')
+  @Get('drive/pasta-raiz')
+  async obterPastaRaiz() {
+    return { pastaRaizId: await this.googleDrive.obterPastaRaizClientes() };
+  }
+
+  // Pasta onde ficam as pastas de todos os clientes — usada só pra alimentar
+  // a busca automática por nome (ver EmpresasController.buscarPastaDrive).
+  @Roles('administrador')
+  @Post('drive/pasta-raiz')
+  async salvarPastaRaiz(@Body('pastaRaizId') pastaRaizId: string) {
+    await this.googleDrive.salvarPastaRaizClientes(extrairIdPasta(pastaRaizId));
+    return { ok: true };
   }
 
   // O Google redireciona o navegador do usuário direto pra cá, sem o header

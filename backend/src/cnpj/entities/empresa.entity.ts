@@ -93,6 +93,14 @@ export class Empresa {
   @Column({ name: 'inscricao_estadual', nullable: true, type: 'varchar' })
   inscricaoEstadual: string | null;
 
+  // Pasta do Google Drive específica DESSE cliente — onde cai o relatório de
+  // pré-análise quando ele entra no lote (ver google-drive.service.ts). Uma
+  // pasta por usuário era inviável (todo cliente iria pro mesmo lugar); cada
+  // cliente tem sua própria subpasta na estrutura real do escritório, achada
+  // via busca por nome dentro de uma pasta raiz configurada (28/10/2026).
+  @Column({ name: 'pasta_drive_id', nullable: true, type: 'varchar' })
+  pastaDriveId: string | null;
+
   @CreateDateColumn({ name: 'criado_em' })
   criadoEm: Date;
 

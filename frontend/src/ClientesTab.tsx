@@ -13,6 +13,7 @@ interface Empresa {
   inscricaoMobiliaria: string | null
   cga: string | null
   inscricaoEstadual: string | null
+  pastaDriveId: string | null
 }
 
 interface CertificadoPublico {
@@ -106,6 +107,121 @@ function diasParaVencer(validade: string | null): number | null {
   if (!validade) return null
   const ms = new Date(validade).getTime() - Date.now()
   return Math.floor(ms / (1000 * 60 * 60 * 24))
+}
+
+// ─── PastaDriveCliente ────────────────────────────────────────────────────────
+
+interface PastaCandidata {
+  id: string
+  nome: string
+  pontuacao: number
+}
+
+function PastaDriveCliente({ empresaId, razaoSocial, pastaDriveIdInicial }: {
+  empresaId: string
+  razaoSocial: string
+  pastaDriveIdInicial: string | null
+}) {
+  const [pastaAtual, setPastaAtual] = useState(pastaDriveIdInicial)
+  const [buscando, setBuscando] = useState(false)
+  const [candidatos, setCandidatos] = useState<PastaCandidata[] | null>(null)
+  const [confirmando, setConfirmando] = useState<string | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+  const [editandoManual, setEditandoManual] = useState(false)
+  const [valorManual, setValorManual] = useState('')
+  const [salvandoManual, setSalvandoManual] = useState(false)
+
+  async function buscarCandidatos() {
+    setBuscando(true); setErro(null); setCandidatos(null)
+    try {
+      const res = await apiFetch(`/empresas/${empresaId}/drive/candidatos`)
+      const json = await res.json()
+      if (!res.ok) { setErro((json as { message?: string }).message ?? 'Não foi possível buscar sugestões.'); return }
+      const lista = json as PastaCandidata[]
+      if (lista.length === 0) setErro('Nenhuma pasta parecida encontrada na pasta raiz. Use "Colar link manualmente".')
+      else setCandidatos(lista)
+    } catch { setErro('Erro de rede ao buscar sugestões.') }
+    finally { setBuscando(false) }
+  }
+
+  async function confirmar(pastaClienteId: string) {
+    setConfirmando(pastaClienteId); setErro(null)
+    try {
+      const res = await apiFetch(`/empresas/${empresaId}/drive/confirmar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pastaClienteId }),
+      })
+      const json = await res.json()
+      if (!res.ok) { setErro((json as { message?: string }).message ?? 'Não foi possível confirmar a pasta.'); return }
+      setPastaAtual((json as { pastaDriveId: string }).pastaDriveId)
+      setCandidatos(null)
+    } catch { setErro('Erro de rede ao confirmar a pasta.') }
+    finally { setConfirmando(null) }
+  }
+
+  async function salvarManual() {
+    setSalvandoManual(true); setErro(null)
+    try {
+      const res = await apiFetch(`/empresas/${empresaId}/drive`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pastaDriveId: valorManual || null }),
+      })
+      if (!res.ok) { setErro('Não foi possível salvar a pasta.'); return }
+      setPastaAtual(valorManual || null)
+      setEditandoManual(false)
+    } catch { setErro('Erro de rede ao salvar.') }
+    finally { setSalvandoManual(false) }
+  }
+
+  return (
+    <div className="pt-3 border-t border-gray-100">
+      <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-wide mb-2">Pasta no Drive (envio em lote)</p>
+
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-xs font-body text-gray-600">
+          {pastaAtual ? <span className="text-emerald-600 font-display font-bold">✓ Configurada</span> : 'Não configurada'}
+        </span>
+        <button onClick={buscarCandidatos} disabled={buscando}
+          className="text-xs font-display font-bold text-primary hover:underline disabled:opacity-50">
+          {buscando ? 'Buscando…' : `Buscar automaticamente (${razaoSocial.split(' ')[0]})`}
+        </button>
+        <button onClick={() => { setEditandoManual(v => !v); setValorManual(pastaAtual ?? '') }}
+          className="text-xs font-display font-bold text-gray-500 hover:underline">
+          Colar link manualmente
+        </button>
+      </div>
+
+      {editandoManual && (
+        <div className="flex items-center gap-2 mb-2">
+          <input type="text" value={valorManual} onChange={e => setValorManual(e.target.value)}
+            placeholder="ID ou link da pasta no Drive" autoComplete="off"
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"/>
+          <button onClick={salvarManual} disabled={salvandoManual}
+            className="text-xs font-display font-bold text-primary hover:underline disabled:opacity-50">
+            {salvandoManual ? '…' : 'Salvar'}
+          </button>
+        </div>
+      )}
+
+      {candidatos && (
+        <div className="space-y-1.5 mb-2">
+          {candidatos.map(c => (
+            <div key={c.id} className="bg-gray-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-xs font-body">
+              <span className="text-depth">{c.nome}</span>
+              <button onClick={() => confirmar(c.id)} disabled={confirmando === c.id}
+                className="text-xs font-display font-bold bg-primary text-white px-3 py-1 rounded-lg hover:bg-depth transition-colors disabled:opacity-50 whitespace-nowrap">
+                {confirmando === c.id ? 'Confirmando…' : 'É essa'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {erro && <p className="text-xs text-danger font-display font-bold">⚠ {erro}</p>}
+    </div>
+  )
 }
 
 // ─── Modal de cadastro/edição ───────────────────────────────────────────────────
@@ -454,6 +570,8 @@ function ModalEmpresa({ empresa, certificadoInicial, onSalvo, onFechar }: ModalP
               ) : (
                 <p className="text-xs text-gray-400 font-body">Nenhum relatório gerado ainda.</p>
               )}
+
+              <PastaDriveCliente empresaId={empresa!.id} razaoSocial={empresa!.razaoSocial} pastaDriveIdInicial={empresa!.pastaDriveId} />
             </div>
           )}
         </div>
@@ -553,9 +671,12 @@ export function ClientesTab() {
     setResultadoDrive(null)
     try {
       const res = await apiFetch('/relatorios/pre-analise-lote/drive', { method: 'POST' })
-      const json = await res.json() as { enviados?: number; total?: number; message?: string }
+      const json = await res.json() as { enviados?: number; total?: number; semPasta?: string[]; message?: string }
       if (!res.ok) { setResultadoDrive(json.message ?? 'Não foi possível enviar pro Drive.'); return }
-      setResultadoDrive(`${json.enviados} de ${json.total} relatórios enviados pro Drive.`)
+      const semPasta = json.semPasta?.length
+        ? ` — sem pasta configurada: ${json.semPasta.join(', ')}`
+        : ''
+      setResultadoDrive(`${json.enviados} de ${json.total} relatórios enviados pro Drive.${semPasta}`)
     } catch { setResultadoDrive('Erro de rede ao enviar pro Drive.') }
     finally { setEnviandoDrive(false) }
   }

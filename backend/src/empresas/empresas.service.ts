@@ -6,6 +6,8 @@ import { CertificadoDigital } from './entities/certificado-digital.entity';
 import { Certidao } from '../database/entities/certidao.entity';
 import { Anexo } from '../database/entities/anexo.entity';
 import { CredenciaisCriptService } from '../credenciais/credenciais-cript.service';
+import { GoogleDriveService, type PastaCandidata } from '../google-drive/google-drive.service';
+import { extrairIdPasta } from '../google-drive/extrair-id-pasta.util';
 import type {
   CriarEmpresaDto,
   AtualizarEmpresaDto,
@@ -25,7 +27,36 @@ export class EmpresasService {
     @InjectRepository(Anexo)
     private readonly anexoRepo: Repository<Anexo>,
     private readonly cript: CredenciaisCriptService,
+    private readonly googleDrive: GoogleDriveService,
   ) {}
+
+  // Sugestões de pasta no Drive pra esse cliente, por nome parecido, dentro
+  // da pasta raiz configurada — o usuário confirma qual é a certa (ver
+  // confirmarPastaDrive); nunca associa sozinho.
+  async buscarCandidatosPastaDrive(id: string): Promise<PastaCandidata[]> {
+    const empresa = await this.empresaRepo.findOne({ where: { id } });
+    if (!empresa) throw new NotFoundException('Empresa não encontrada.');
+    return this.googleDrive.buscarCandidatos(empresa.razaoSocial);
+  }
+
+  // Depois que o usuário confirma qual pasta (de buscarCandidatosPastaDrive)
+  // é a do cliente, acha/cria a subpasta de relatório dentro dela e salva
+  // como destino final.
+  async confirmarPastaDrive(id: string, pastaClienteId: string): Promise<{ pastaDriveId: string; nome: string }> {
+    const empresa = await this.empresaRepo.findOne({ where: { id } });
+    if (!empresa) throw new NotFoundException('Empresa não encontrada.');
+    const { id: pastaRelatorioId, nome } = await this.googleDrive.resolverPastaRelatorio(pastaClienteId);
+    await this.empresaRepo.update(id, { pastaDriveId: pastaRelatorioId });
+    return { pastaDriveId: pastaRelatorioId, nome };
+  }
+
+  // Liberdade de colar o link direto, sem passar pela busca automática —
+  // útil quando o nome do cliente não bate com nada na pasta raiz.
+  async definirPastaDriveManual(id: string, pastaDriveId: string | null): Promise<void> {
+    const empresa = await this.empresaRepo.findOne({ where: { id } });
+    if (!empresa) throw new NotFoundException('Empresa não encontrada.');
+    await this.empresaRepo.update(id, { pastaDriveId: pastaDriveId ? extrairIdPasta(pastaDriveId) : null });
+  }
 
   async listar(busca?: string): Promise<Empresa[]> {
     if (!busca) {

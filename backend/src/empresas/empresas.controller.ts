@@ -70,4 +70,22 @@ export class EmpresasController {
   removerCertificado(@Param('id') id: string) {
     return this.service.removerCertificado(id);
   }
+
+  @Roles('administrador')
+  @Get(':id/drive/candidatos')
+  buscarCandidatosPastaDrive(@Param('id') id: string) {
+    return this.service.buscarCandidatosPastaDrive(id);
+  }
+
+  @Roles('administrador')
+  @Post(':id/drive/confirmar')
+  confirmarPastaDrive(@Param('id') id: string, @Body('pastaClienteId') pastaClienteId: string) {
+    return this.service.confirmarPastaDrive(id, pastaClienteId);
+  }
+
+  @Roles('administrador')
+  @Patch(':id/drive')
+  definirPastaDriveManual(@Param('id') id: string, @Body('pastaDriveId') pastaDriveId: string | null) {
+    return this.service.definirPastaDriveManual(id, pastaDriveId);
+  }
 }

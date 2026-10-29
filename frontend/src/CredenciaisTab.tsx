@@ -137,17 +137,35 @@ interface StatusDrive {
   descricao?: string
 }
 
+// Aceita tanto o ID puro quanto uma URL completa de pasta do Drive — assim
+// dá pra colar o link da barra de endereço direto.
+function extrairIdPasta(valor: string): string {
+  const match = valor.match(/\/folders\/([a-zA-Z0-9_-]+)/)
+  return (match ? match[1] : valor).trim()
+}
+
 function ConexaoDrive() {
   const [status, setStatus] = useState<StatusDrive | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [conectando, setConectando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
 
+  const [pastaRaiz, setPastaRaiz] = useState('')
+  const [pastaRaizSalva, setPastaRaizSalva] = useState<string | null>(null)
+  const [editandoPastaRaiz, setEditandoPastaRaiz] = useState(false)
+  const [salvandoPastaRaiz, setSalvandoPastaRaiz] = useState(false)
+
   async function carregar() {
     setCarregando(true)
     try {
       const res = await apiFetch('/relatorios/drive/status')
       if (res.ok) setStatus(await res.json() as StatusDrive)
+      const resRaiz = await apiFetch('/relatorios/drive/pasta-raiz')
+      if (resRaiz.ok) {
+        const { pastaRaizId } = await resRaiz.json() as { pastaRaizId: string | null }
+        setPastaRaizSalva(pastaRaizId)
+        setPastaRaiz(pastaRaizId ?? '')
+      }
     } catch { /* silencioso — card mostra "não conectado" por padrão */ }
     finally { setCarregando(false) }
   }
@@ -166,26 +184,77 @@ function ConexaoDrive() {
     finally { setConectando(false) }
   }
 
+  async function salvarPastaRaiz() {
+    setSalvandoPastaRaiz(true)
+    try {
+      const res = await apiFetch('/relatorios/drive/pasta-raiz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pastaRaizId: extrairIdPasta(pastaRaiz) }),
+      })
+      if (res.ok) { setPastaRaizSalva(extrairIdPasta(pastaRaiz)); setEditandoPastaRaiz(false) }
+    } finally { setSalvandoPastaRaiz(false) }
+  }
+
   return (
-    <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-6 flex items-center justify-between gap-4 flex-wrap">
-      <div>
-        <h3 className="font-display font-bold text-depth text-sm mb-1">Conta do Google Drive</h3>
-        {carregando ? (
-          <p className="text-gray-400 text-sm font-body">Verificando…</p>
-        ) : status?.conectado ? (
-          <p className="text-emerald-600 text-sm font-body">✓ {status.descricao}</p>
-        ) : (
-          <p className="text-gray-400 text-sm font-body">Nenhuma conta conectada ainda — necessário pro envio em lote pro Drive.</p>
-        )}
-        {erro && <p className="text-danger text-xs font-display font-bold mt-1">⚠ {erro}</p>}
+    <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-6 space-y-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="font-display font-bold text-depth text-sm mb-1">Conta do Google Drive</h3>
+          {carregando ? (
+            <p className="text-gray-400 text-sm font-body">Verificando…</p>
+          ) : status?.conectado ? (
+            <p className="text-emerald-600 text-sm font-body">✓ {status.descricao}</p>
+          ) : (
+            <p className="text-gray-400 text-sm font-body">Nenhuma conta conectada ainda — necessário pro envio em lote pro Drive.</p>
+          )}
+          {erro && <p className="text-danger text-xs font-display font-bold mt-1">⚠ {erro}</p>}
+        </div>
+        <button
+          onClick={conectar}
+          disabled={conectando}
+          className="bg-depth text-white font-display font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-primary transition-colors disabled:opacity-50 whitespace-nowrap"
+        >
+          {conectando ? 'Abrindo…' : status?.conectado ? 'Reconectar' : 'Conectar conta do Drive'}
+        </button>
       </div>
-      <button
-        onClick={conectar}
-        disabled={conectando}
-        className="bg-depth text-white font-display font-bold text-sm px-5 py-2.5 rounded-xl hover:bg-primary transition-colors disabled:opacity-50 whitespace-nowrap"
-      >
-        {conectando ? 'Abrindo…' : status?.conectado ? 'Reconectar' : 'Conectar conta do Drive'}
-      </button>
+
+      <div className="pt-3 border-t border-gray-100">
+        <p className="text-xs font-display font-bold text-gray-500 uppercase tracking-widest mb-1.5">
+          Pasta raiz de clientes (busca automática)
+        </p>
+        {!editandoPastaRaiz ? (
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-body text-gray-600">
+              {pastaRaizSalva ? 'Configurada' : 'Não configurada'}
+            </p>
+            <button onClick={() => setEditandoPastaRaiz(true)} className="text-xs font-display font-bold text-primary hover:underline">
+              {pastaRaizSalva ? 'Trocar' : 'Configurar'}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={pastaRaiz}
+              onChange={e => setPastaRaiz(e.target.value)}
+              placeholder="ID ou link da pasta que contém todos os clientes"
+              autoComplete="off"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-body text-depth focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+            />
+            <button onClick={salvarPastaRaiz} disabled={salvandoPastaRaiz} className="text-xs font-display font-bold text-primary hover:underline disabled:opacity-50">
+              {salvandoPastaRaiz ? '…' : 'Salvar'}
+            </button>
+            <button onClick={() => setEditandoPastaRaiz(false)} className="text-xs font-display font-medium text-gray-400 hover:text-depth">
+              Cancelar
+            </button>
+          </div>
+        )}
+        <p className="mt-1.5 text-xs text-gray-400 font-body">
+          A pasta que contém a subpasta de cada cliente (ex: "CLIENTES ATIVOS"). Usada pra sugerir
+          automaticamente a pasta de cada cliente na aba Clientes.
+        </p>
+      </div>
     </div>
   )
 }

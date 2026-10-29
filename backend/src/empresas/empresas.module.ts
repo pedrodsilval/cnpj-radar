@@ -7,9 +7,10 @@ import { Anexo } from '../database/entities/anexo.entity';
 import { EmpresasService } from './empresas.service';
 import { EmpresasController } from './empresas.controller';
 import { CredenciaisModule } from '../credenciais/credenciais.module';
+import { GoogleDriveModule } from '../google-drive/google-drive.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Empresa, CertificadoDigital, Certidao, Anexo]), CredenciaisModule],
+  imports: [TypeOrmModule.forFeature([Empresa, CertificadoDigital, Certidao, Anexo]), CredenciaisModule, GoogleDriveModule],
   controllers: [EmpresasController],
   providers: [EmpresasService],
   exports: [EmpresasService],

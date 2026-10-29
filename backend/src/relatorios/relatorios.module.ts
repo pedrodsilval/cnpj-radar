@@ -3,22 +3,20 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao } from '../database/entities/certidao.entity';
-import { Usuario } from '../database/entities/usuario.entity';
 import { RelatorioGerado } from './relatorio-gerado.entity';
 import { RelatoriosService } from './relatorios.service';
 import { RelatoriosController } from './relatorios.controller';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
 import { CertidoesModule } from '../certidoes/certidoes.module';
-import { CredenciaisModule } from '../credenciais/credenciais.module';
-import { GoogleDriveService } from './google-drive.service';
+import { GoogleDriveModule } from '../google-drive/google-drive.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Empresa, Socio, Certidao, RelatorioGerado, Usuario]),
+    TypeOrmModule.forFeature([Empresa, Socio, Certidao, RelatorioGerado]),
     CertidoesModule,
-    CredenciaisModule,
+    GoogleDriveModule,
   ],
-  providers: [RelatoriosService, SupabaseStorageService, GoogleDriveService],
+  providers: [RelatoriosService, SupabaseStorageService],
   controllers: [RelatoriosController],
 })
 export class RelatoriosModule {}

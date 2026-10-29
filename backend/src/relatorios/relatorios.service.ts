@@ -7,12 +7,11 @@ import archiver from 'archiver';
 import { Empresa } from '../cnpj/entities/empresa.entity';
 import { Socio } from '../cnpj/entities/socio.entity';
 import { Certidao, CERTIDAO_LABELS, CertidaoStatus } from '../database/entities/certidao.entity';
-import { Usuario } from '../database/entities/usuario.entity';
 import { sanitizeCnpj } from '../common/utils/cnpj.util';
 import { SupabaseStorageService } from '../common/supabase-storage.service';
 import { RelatorioGerado } from './relatorio-gerado.entity';
 import { CertidoesService } from '../certidoes/certidoes.service';
-import { GoogleDriveService } from './google-drive.service';
+import { GoogleDriveService } from '../google-drive/google-drive.service';
 
 const STATUS_LABEL: Record<CertidaoStatus, string> = {
   [CertidaoStatus.REGULAR]: 'Regular',
@@ -62,7 +61,6 @@ export class RelatoriosService {
     @InjectRepository(Socio) private readonly socioRepo: Repository<Socio>,
     @InjectRepository(Certidao) private readonly certidaoRepo: Repository<Certidao>,
     @InjectRepository(RelatorioGerado) private readonly relatorioGeradoRepo: Repository<RelatorioGerado>,
-    @InjectRepository(Usuario) private readonly usuarioRepo: Repository<Usuario>,
     private readonly storage: SupabaseStorageService,
     private readonly certidoesService: CertidoesService,
     private readonly googleDrive: GoogleDriveService,
@@ -155,23 +153,24 @@ export class RelatoriosService {
   // já com o nome "fatiado" pra nome de arquivo. Clientes com pendência ficam
   // de fora de propósito (pedido da Itauana, 28/10/2026) — exigem olhar
   // individual antes de qualquer relatório sair pro cliente.
-  private async listarElegiveisComSlug(): Promise<{ empresaId: string; cnpj: string; razaoSocial: string; slug: string }[]> {
+  private async listarElegiveisComSlug(): Promise<{ empresaId: string; cnpj: string; razaoSocial: string; slug: string; pastaDriveId: string | null }[]> {
     const resumo = await this.certidoesService.resumoPendenciasClientes();
     const elegiveis = resumo.filter((r) => r.elegivelLote);
     if (elegiveis.length === 0) return [];
 
     const empresas = await this.empresaRepo.find({
       where: { id: In(elegiveis.map((e) => e.empresaId)) },
-      select: { id: true, razaoSocial: true },
+      select: { id: true, razaoSocial: true, pastaDriveId: true },
     });
-    const nomePorId = new Map(empresas.map((e) => [e.id, e.razaoSocial]));
+    const porId = new Map(empresas.map((e) => [e.id, e]));
 
     return elegiveis.map((item) => {
-      const razaoSocial = nomePorId.get(item.empresaId) ?? item.cnpj;
+      const empresa = porId.get(item.empresaId);
+      const razaoSocial = empresa?.razaoSocial ?? item.cnpj;
       const slug = razaoSocial
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
-      return { empresaId: item.empresaId, cnpj: item.cnpj, razaoSocial, slug };
+      return { empresaId: item.empresaId, cnpj: item.cnpj, razaoSocial, slug, pastaDriveId: empresa?.pastaDriveId ?? null };
     });
   }
 
@@ -207,30 +206,30 @@ export class RelatoriosService {
     return { buffer: Buffer.concat(chunks), nomeArquivo, total: incluidos };
   }
 
-  // Mesmo critério do zip, mas sobe cada PDF individualmente pra pasta do
-  // Drive configurada pelo usuário que disparou o envio (usuarios.pasta_drive_id)
-  // — não existe vínculo cliente↔consultor no cadastro, então o destino é
-  // sempre "a pasta de quem clicou no botão" (decisão de 28/10/2026).
-  async enviarLotePraDrive(usuarioId: string): Promise<{ enviados: number; total: number }> {
-    const usuario = await this.usuarioRepo.findOne({ where: { id: usuarioId } });
-    if (!usuario?.pastaDriveId) {
-      throw new BadRequestException('Configure a pasta do Drive em Usuários antes de enviar.');
-    }
-
+  // Mesmo critério do zip, mas sobe cada PDF individualmente pra pasta DESSE
+  // CLIENTE (empresas.pasta_drive_id) — uma pasta única por usuário não fazia
+  // sentido (todo cliente cairia no mesmo lugar); cada cliente tem sua
+  // própria pasta na estrutura real do escritório (decisão de 29/10/2026,
+  // ver GoogleDriveService.buscarCandidatos). Cliente sem pasta configurada
+  // é pulado, não trava o lote — entra em "semPasta" pro usuário configurar.
+  async enviarLotePraDrive(usuarioId: string): Promise<{ enviados: number; total: number; semPasta: string[] }> {
     const elegiveis = await this.listarElegiveisComSlug();
     let enviados = 0;
+    const semPasta: string[] = [];
+
     for (const item of elegiveis) {
+      if (!item.pastaDriveId) { semPasta.push(item.razaoSocial); continue; }
       try {
         const { buffer } = await this.gerarPreAnalisePdf(item.cnpj);
-        await this.googleDrive.enviarPdf(`${item.razaoSocial} - ${item.cnpj}.pdf`, buffer, usuario.pastaDriveId);
+        await this.googleDrive.enviarPdf(`${item.razaoSocial} - ${item.cnpj}.pdf`, buffer, item.pastaDriveId);
         enviados++;
       } catch (err) {
         // Um cliente com erro não deve travar o envio dos demais.
-        this.logger.warn(`Não consegui enviar o relatório de ${item.cnpj} pro Drive: ${err}`);
+        this.logger.warn(`Não consegui enviar o relatório de ${item.cnpj} pro Drive (usuário ${usuarioId}): ${err}`);
       }
     }
 
-    return { enviados, total: elegiveis.length };
+    return { enviados, total: elegiveis.length, semPasta };
   }
 
   private montarHtml(empresa: Empresa, socios: Socio[], certidoes: Certidao[]): string {

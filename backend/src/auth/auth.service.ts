@@ -88,8 +88,4 @@ export class AuthService {
   async desativarUsuario(id: string): Promise<void> {
     await this.usuarioRepo.update(id, { ativo: false });
   }
-
-  async atualizarPastaDrive(id: string, pastaDriveId: string | null): Promise<void> {
-    await this.usuarioRepo.update(id, { pastaDriveId: pastaDriveId?.trim() || null });
-  }
 }

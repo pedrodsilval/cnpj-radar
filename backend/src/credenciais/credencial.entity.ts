@@ -12,6 +12,10 @@ export enum CredencialTipo {
   GOOGLE_DRIVE_SERVICE_ACCOUNT = 'GOOGLE_DRIVE_SERVICE_ACCOUNT',
   GOOGLE_OAUTH_CLIENT = 'GOOGLE_OAUTH_CLIENT',
   GOOGLE_DRIVE_REFRESH_TOKEN = 'GOOGLE_DRIVE_REFRESH_TOKEN',
+  // ID da pasta raiz onde ficam as pastas de cada cliente — usada só pra
+  // alimentar a busca automática de pasta por cliente (GoogleDriveService.
+  // buscarCandidatos), nunca como destino de upload em si.
+  GOOGLE_DRIVE_PASTA_RAIZ_CLIENTES = 'GOOGLE_DRIVE_PASTA_RAIZ_CLIENTES',
   OUTRO           = 'OUTRO',
 }
 
@@ -23,6 +27,7 @@ export const CREDENCIAL_LABELS: Record<CredencialTipo, string> = {
   [CredencialTipo.GOOGLE_DRIVE_SERVICE_ACCOUNT]: 'Google Drive (conta de serviço — descontinuado)',
   [CredencialTipo.GOOGLE_OAUTH_CLIENT]: 'Google OAuth (Client ID/Secret)',
   [CredencialTipo.GOOGLE_DRIVE_REFRESH_TOKEN]: 'Google Drive (conta autorizada)',
+  [CredencialTipo.GOOGLE_DRIVE_PASTA_RAIZ_CLIENTES]: 'Google Drive (pasta raiz de clientes)',
   [CredencialTipo.OUTRO]:           'Outro',
 };
 
