@@ -147,8 +147,18 @@ export class GoogleDriveService {
     const { token } = await cliente.getAccessToken();
     if (!token) throw new Error('Não foi possível obter token de acesso ao Google Drive.');
 
+    // includeItemsFromAllDrives/supportsAllDrives: sem isso, pastas dentro de
+    // um Drive Compartilhado (Shared Drive) do Workspace somem da busca sem
+    // erro nenhum — a API só retorna lista vazia (achado real, 29/10/2026).
     const q = `'${pastaId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1000`, {
+    const params = new URLSearchParams({
+      q,
+      fields: 'files(id,name)',
+      pageSize: '1000',
+      includeItemsFromAllDrives: 'true',
+      supportsAllDrives: 'true',
+    });
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -162,7 +172,7 @@ export class GoogleDriveService {
   private async criarSubpasta(pastaPaiId: string, nome: string): Promise<string> {
     const cliente = await this.obterClienteAutorizado();
     const { token } = await cliente.getAccessToken();
-    const res = await fetch('https://www.googleapis.com/drive/v3/files', {
+    const res = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: nome, mimeType: 'application/vnd.google-apps.folder', parents: [pastaPaiId] }),
@@ -220,7 +230,7 @@ export class GoogleDriveService {
       Buffer.from(`\r\n--${boundary}--`),
     ]);
 
-    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
